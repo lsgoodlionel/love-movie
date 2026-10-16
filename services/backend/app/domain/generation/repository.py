@@ -1,10 +1,13 @@
 from typing import Any
 
+from datetime import datetime, timezone
+from uuid import UUID
+
 from sqlalchemy import Engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
-from app.domain.generation.models import GenerationStep, GenerationTask
+from app.domain.generation.models import GenerationEvent, GenerationStep, GenerationTask
 from app.domain.generation.models import UsageLedger
 from app.domain.generation.schemas import CreateGenerationCommand, GenerationStatus
 from app.domain.assets.models import Asset
@@ -135,3 +138,67 @@ class GenerationRepository:
                     **values,
                 )
             )
+
+    def get_scoped_task(self, tenant_id: UUID, task_id: UUID) -> tuple[GenerationTask | None, bool]:
+        with self._sessions() as db:
+            task = db.get(GenerationTask, task_id)
+            if task is None:
+                return None, False
+            if task.tenant_id != tenant_id:
+                return None, True
+            return task, False
+
+    def request_cancellation(self, tenant_id: UUID, task_id: UUID) -> tuple[str, bool]:
+        with self._sessions.begin() as db:
+            task = db.get(GenerationTask, task_id)
+            if task is None:
+                raise LookupError("生成任务不存在")
+            if task.tenant_id != tenant_id:
+                return task.status, True
+            task.cancellation_requested_at = datetime.now(timezone.utc)
+            if task.status in {"draft", "validating", "queued"}:
+                task.status = "cancelled"
+            elif task.status not in {"completed", "cancelled", "failed"}:
+                task.status = "cancelling"
+            return task.status, False
+
+    def append_event(self, task_id: Any, kind: str, message: str, progress: int | None = None) -> GenerationEvent:
+        with self._sessions.begin() as db:
+            event = GenerationEvent(
+                generation_task_id=task_id,
+                kind=kind,
+                message=message,
+                progress=progress,
+            )
+            db.add(event)
+            db.flush()
+            return event
+
+    def events_after(self, task_id: UUID, last_event_id: int = 0) -> list[GenerationEvent]:
+        with self._sessions() as db:
+            return list(
+                db.scalars(
+                    select(GenerationEvent)
+                    .where(
+                        GenerationEvent.generation_task_id == task_id,
+                        GenerationEvent.id > last_event_id,
+                    )
+                    .order_by(GenerationEvent.id)
+                )
+            )
+
+    def list_assets(self, tenant_id: UUID, project_id: UUID | None = None) -> list[Asset]:
+        with self._sessions() as db:
+            query = select(Asset).where(Asset.tenant_id == tenant_id)
+            if project_id is not None:
+                query = query.where(Asset.project_id == project_id)
+            return list(db.scalars(query.order_by(Asset.created_at.desc())))
+
+    def get_scoped_asset(self, tenant_id: UUID, asset_id: UUID) -> tuple[Asset | None, bool]:
+        with self._sessions() as db:
+            asset = db.get(Asset, asset_id)
+            if asset is None:
+                return None, False
+            if asset.tenant_id != tenant_id:
+                return None, True
+            return asset, False

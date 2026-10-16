@@ -72,4 +72,17 @@ class UsageLedger(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-__all__ = ["Base", "GenerationTask", "GenerationStep", "UsageLedger"]
+class GenerationEvent(Base):
+    __tablename__ = "generation_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    generation_task_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("generation_tasks.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(64))
+    message: Mapped[str] = mapped_column(String(240))
+    progress: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+__all__ = ["Base", "GenerationTask", "GenerationStep", "UsageLedger", "GenerationEvent"]
