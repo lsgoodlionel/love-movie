@@ -1,58 +1,88 @@
-:root {
-  color-scheme: dark;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
-  background: #090b10;
-  color: #f6f4ee;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  min-height: 100vh;
-  background:
-    radial-gradient(circle at 75% 20%, rgb(153 58 106 / 28%), transparent 34rem),
-    linear-gradient(145deg, #08090d, #111521 65%, #171019);
-}
-
-.shell {
-  display: grid;
-  min-height: 100vh;
-  align-content: center;
-  gap: 1.25rem;
-  width: min(72rem, calc(100% - 3rem));
-  margin: auto;
-}
-
-.eyebrow {
-  color: #eab9d2;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-h1 {
-  max-width: 12ch;
-  margin: 0;
-  font-family: Georgia, "Noto Serif SC", serif;
-  font-size: clamp(3rem, 9vw, 8rem);
-  font-weight: 500;
-  line-height: 0.96;
-}
-
-.lede {
-  max-width: 36rem;
-  color: #c9c8c3;
-  font-size: 1.125rem;
-  line-height: 1.7;
-}
-
-.status {
-  width: fit-content;
-  border: 1px solid rgb(255 255 255 / 14%);
-  border-radius: 999px;
-  padding: 0.65rem 1rem;
-  background: rgb(255 255 255 / 5%);
-  color: #eee1e8;
-}
+:root { color-scheme: dark; --ink:#f6f2ea; --muted:#9f9b95; --paper:#0b0c0e; --panel:#121316; --line:rgba(255,255,255,.11); --rose:#d96b8d; --rose-light:#ffb1c8; --lime:#d8ef9b; font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--paper); color:var(--ink); }
+* { box-sizing:border-box; }
+body { margin:0; min-height:100vh; background:var(--paper); }
+button,input,textarea,select { font:inherit; }
+a { color:inherit; text-decoration:none; }
+.app-frame { min-height:100vh; background:radial-gradient(circle at 86% 14%,rgba(217,107,141,.10),transparent 28rem),#0b0c0e; }
+.topbar { height:76px; display:flex; align-items:center; gap:3rem; padding:0 max(2rem,calc((100vw - 1400px)/2)); border-bottom:1px solid var(--line); background:rgba(11,12,14,.88); backdrop-filter:blur(18px); position:sticky; top:0; z-index:10; }
+.brand { display:flex; align-items:center; gap:.7rem; font:1.1rem Georgia,"Noto Serif SC",serif; }
+.brand-mark { display:grid; place-items:center; width:36px; height:36px; color:#111; background:var(--rose-light); border-radius:50%; font-weight:700; }
+.brand small,.account-chip small { display:block; color:var(--muted); font: .58rem Inter,sans-serif; letter-spacing:.16em; margin-top:.15rem; }
+.topbar nav { display:flex; gap:2rem; margin-right:auto; font-size:.88rem; }
+.topbar nav a,.nav-muted { padding:1.8rem 0; border-bottom:2px solid transparent; }
+.topbar nav a:hover { border-color:var(--rose); }
+.nav-muted { color:#666; }
+.account-chip { display:flex; gap:.6rem; align-items:center; font-size:.78rem; }
+.account-chip>span { display:grid; place-items:center; width:30px; height:30px; border-radius:50%; background:#24262b; color:var(--lime); }
+.studio-main { width:min(1400px,calc(100% - 4rem)); margin:0 auto; padding:4.5rem 0 6rem; }
+.studio-intro { display:flex; justify-content:space-between; align-items:end; gap:3rem; margin-bottom:3.5rem; }
+.studio-intro h1 { font:500 clamp(2.8rem,6vw,6.4rem)/.95 Georgia,"Noto Serif SC",serif; letter-spacing:-.05em; margin:.5rem 0 0; }
+.studio-intro h1 em { display:block; color:var(--rose-light); font-weight:400; }
+.studio-intro>p { max-width:34rem; color:var(--muted); line-height:1.8; margin:0 0 .5rem; }
+.eyebrow { margin:0; color:var(--rose-light); font-size:.68rem; font-weight:700; letter-spacing:.2em; }
+.creation-grid { display:grid; grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr); border:1px solid var(--line); background:rgba(255,255,255,.015); }
+.panel { position:relative; min-height:640px; padding:3rem; }
+.form-panel { border-right:1px solid var(--line); }
+.panel-number { position:absolute; right:1.25rem; top:1rem; color:#3a3b3f; font:4rem/1 Georgia,serif; }
+.mode-switch { display:grid; grid-template-columns:1fr 1fr; gap:4px; width:320px; padding:4px; background:#090a0b; border:1px solid var(--line); border-radius:999px; margin-bottom:2.5rem; }
+.mode-switch button { border:0; border-radius:999px; padding:.75rem 1rem; color:var(--muted); background:transparent; cursor:pointer; }
+.mode-switch .active { background:var(--ink); color:#141416; font-weight:700; }
+.generation-form { display:grid; gap:1.5rem; }
+label { display:grid; gap:.65rem; }
+label>span { color:#d9d6d0; font-size:.78rem; font-weight:650; }
+input,select,textarea { width:100%; border:1px solid var(--line); border-radius:3px; background:#0d0e11; color:var(--ink); padding:.9rem 1rem; outline:none; }
+input:focus,select:focus,textarea:focus { border-color:var(--rose); box-shadow:0 0 0 3px rgba(217,107,141,.1); }
+textarea { resize:vertical; line-height:1.7; min-height:176px; }
+label small { color:#666; justify-self:end; }
+.field-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+.primary-action,.secondary-action { border:0; cursor:pointer; display:inline-flex; justify-content:center; align-items:center; padding:1rem 1.4rem; font-weight:750; }
+.primary-action { color:#171013; background:var(--rose-light); box-shadow:0 10px 36px rgba(217,107,141,.18); }
+.primary-action:hover { background:#ffc3d4; }
+.primary-action:disabled { opacity:.45; cursor:not-allowed; }
+.secondary-action { background:rgba(255,255,255,.08); border:1px solid var(--line); }
+.field-error { margin:0; color:#ff9aa8; font-size:.82rem; line-height:1.5; }
+.field-note { margin:0; color:var(--lime); font-size:.82rem; }
+.project-empty { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+.project-empty .secondary-action { padding:.65rem .85rem; font-size:.75rem; }
+.panel-title,.section-heading { display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; }
+.panel-title h2,.section-heading h2 { margin:.35rem 0 0; font:500 1.8rem Georgia,"Noto Serif SC",serif; }
+.privacy-badge { color:var(--lime); border:1px solid rgba(216,239,155,.24); background:rgba(216,239,155,.06); padding:.5rem .75rem; font-size:.7rem; }
+.preview-empty,.result-preview { min-height:390px; display:grid; place-items:center; align-content:center; position:relative; overflow:hidden; border:1px solid var(--line); background:radial-gradient(circle at 50% 45%,rgba(217,107,141,.12),transparent 35%),#0a0b0d; }
+.preview-empty p { margin:1.25rem 0 .35rem; }
+.preview-empty small { color:var(--muted); }
+.preview-orbit { width:74px; height:74px; border:1px solid rgba(255,177,200,.5); border-radius:50%; box-shadow:0 0 40px rgba(217,107,141,.15); position:relative; }
+.preview-orbit::after { content:""; position:absolute; inset:17px; background:var(--rose-light); border-radius:50%; filter:blur(8px); opacity:.38; }
+.result-preview img,.result-preview video { width:100%; height:390px; object-fit:contain; background:#050506; }
+.result-actions { position:absolute; right:1rem; bottom:1rem; }
+.task-progress { margin-top:1.5rem; }
+.progress-heading { display:flex; justify-content:space-between; font-size:.78rem; }
+.progress-heading>div { display:flex; align-items:center; gap:.5rem; }
+.live-dot { width:8px; height:8px; border-radius:50%; background:var(--rose-light); box-shadow:0 0 12px var(--rose); }
+.progress-track { height:3px; margin:.85rem 0; background:#28292c; overflow:hidden; }
+.progress-track span { display:block; height:100%; background:linear-gradient(90deg,var(--rose),var(--rose-light)); transition:width .3s; }
+.task-progress>p,.trace-id { color:var(--muted); font-size:.75rem; }
+.recent-section { margin-top:4rem; }
+.section-heading>span { color:var(--muted); font-size:.78rem; }
+.recent-grid,.asset-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1rem; }
+.recent-card { display:grid; grid-template-columns:auto 1fr; text-align:left; gap:.25rem .8rem; align-items:center; padding:1rem; color:var(--ink); background:var(--panel); border:1px solid var(--line); cursor:pointer; }
+.recent-card:hover { border-color:rgba(255,177,200,.45); transform:translateY(-2px); }
+.recent-card strong { font-size:.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.recent-card small { color:var(--muted); }
+.kind-icon { grid-row:span 2; display:grid; place-items:center; width:40px; height:40px; background:rgba(217,107,141,.12); color:var(--rose-light); }
+.kind-icon.video { background:rgba(216,239,155,.08); color:var(--lime); }
+.empty-row { padding:2rem; color:var(--muted); border:1px dashed var(--line); }
+.asset-card { border:1px solid var(--line); background:var(--panel); }
+.asset-canvas { aspect-ratio:1; display:grid; place-items:center; background:#08090a; overflow:hidden; }
+.asset-canvas img,.asset-canvas video { width:100%; height:100%; object-fit:contain; }
+.asset-canvas button { color:var(--ink); border:1px solid var(--line); background:transparent; padding:.7rem 1rem; cursor:pointer; }
+.asset-card>div:last-child { display:flex; justify-content:space-between; padding:1rem; font-size:.8rem; }
+.asset-card small { color:var(--muted); }
+.login-page { min-height:100vh; display:grid; grid-template-columns:1.15fr .85fr; background:radial-gradient(circle at 25% 30%,rgba(217,107,141,.18),transparent 30rem),#090a0c; }
+.login-brand { display:grid; align-content:center; padding:8vw; border-right:1px solid var(--line); }
+.login-brand h1 { margin:1rem 0 2rem; font:500 clamp(3rem,6vw,6.8rem)/.96 Georgia,"Noto Serif SC",serif; letter-spacing:-.05em; }
+.login-brand>p:last-child { max-width:32rem; color:var(--muted); line-height:1.8; }
+.login-card { width:min(430px,calc(100% - 4rem)); align-self:center; justify-self:center; display:grid; gap:1.4rem; padding:2.5rem; border:1px solid var(--line); background:rgba(18,19,22,.8); }
+.login-card h2 { margin:0 0 1rem; font:500 2rem Georgia,serif; }
+.login-card small { text-align:center; color:var(--muted); }
+@media (max-width:900px) { .topbar{padding:0 1.25rem;gap:1rem}.topbar nav{gap:1rem;overflow:auto}.nav-muted,.account-chip{display:none}.studio-main{width:min(100% - 2rem,700px);padding-top:3rem}.studio-intro{display:block}.studio-intro>p{margin-top:1.5rem}.creation-grid{grid-template-columns:1fr}.panel{padding:2rem 1.25rem;min-height:auto}.form-panel{border-right:0;border-bottom:1px solid var(--line)}.mode-switch{width:100%}.recent-grid,.asset-grid{grid-template-columns:repeat(2,1fr)}.login-page{grid-template-columns:1fr}.login-brand{display:none} }
+@media (max-width:540px) { .studio-intro h1{font-size:3rem}.field-grid,.recent-grid,.asset-grid{grid-template-columns:1fr}.topbar nav a{font-size:.75rem} }
