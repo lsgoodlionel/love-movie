@@ -1,0 +1,64 @@
+import asyncio
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from uuid import uuid4
+
+from app.worker.runner import GenerationRunner
+
+
+class Repo:
+    def __init__(self, task):
+        self.task = task
+        self.statuses = []
+
+    def get_task(self, task_id):
+        return self.task
+
+    def set_status(self, task_id, status, **values):
+        self.statuses.append(status)
+
+
+class Service:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, task_id):
+        self.calls.append(task_id)
+
+
+def test_running_remote_task_cancellation_is_delegated_to_service() -> None:
+    task_id = uuid4()
+    repo = Repo(
+        SimpleNamespace(
+            id=task_id,
+            kind="image",
+            status="cancelling",
+            cancellation_requested_at=datetime.now(timezone.utc),
+            remote_prompt_id="prompt-running",
+        )
+    )
+    image = Service()
+
+    asyncio.run(GenerationRunner(repo, image, Service()).run(str(task_id)))
+
+    assert image.calls == [task_id]
+    assert repo.statuses == []
+
+
+def test_queued_cancellation_finishes_without_remote_service() -> None:
+    task_id = uuid4()
+    repo = Repo(
+        SimpleNamespace(
+            id=task_id,
+            kind="image",
+            status="cancelled",
+            cancellation_requested_at=datetime.now(timezone.utc),
+            remote_prompt_id=None,
+        )
+    )
+    image = Service()
+
+    asyncio.run(GenerationRunner(repo, image, Service()).run(str(task_id)))
+
+    assert image.calls == []
+    assert repo.statuses == ["cancelled"]

@@ -23,7 +23,10 @@ class GenerationRunner:
         task = self._repository.get_task(normalized_id)
         if task is None:
             raise LookupError("生成任务不存在")
-        if task.cancellation_requested_at is not None or task.status == "cancelled":
+        if task.status == "cancelled":
+            self._repository.set_status(normalized_id, "cancelled")
+            return
+        if task.cancellation_requested_at is not None and not task.remote_prompt_id:
             self._repository.set_status(normalized_id, "cancelled")
             return
         try:

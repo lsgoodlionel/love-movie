@@ -31,11 +31,11 @@ class ImageGenerationService:
 
         async with self._gpu_lease.acquire(str(task_id)) as guard:
             gpu_started = time.monotonic()
+            await self._ensure_active(task_id, task.remote_prompt_id)
             existing = self._repository.find_asset(task_id, "image")
             if existing is not None:
                 self._repository.set_status(task_id, "completed")
                 return existing
-            await self._ensure_active(task_id, task.remote_prompt_id)
             workflow = self._workflows.render_image_workflow(parameters)
             prompt_id = task.remote_prompt_id
             if not prompt_id:
