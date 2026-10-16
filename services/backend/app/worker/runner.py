@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from app.domain.generation.schemas import GenerationKind
+from app.domain.generation.schemas import RECOVERABLE_PERSISTED_PROMPT_ERRORS, GenerationKind
 from app.services.exceptions import GenerationCancelled
 
 
@@ -40,7 +40,20 @@ class GenerationRunner:
             self._repository.set_status(normalized_id, "cancelled")
         except Exception as exc:
             code = getattr(exc, "code", "GENERATION_FAILED")
-            if code == "REMOTE_SUBMISSION_UNKNOWN" or task.cancellation_requested_at is not None:
+            current_task = self._repository.get_task(normalized_id)
+            persisted_prompt_is_recoverable = bool(
+                current_task
+                and current_task.remote_prompt_id
+                and code in RECOVERABLE_PERSISTED_PROMPT_ERRORS
+            )
+            cancellation_is_persisted = bool(
+                current_task and current_task.cancellation_requested_at is not None
+            )
+            if (
+                code == "REMOTE_SUBMISSION_UNKNOWN"
+                or persisted_prompt_is_recoverable
+                or cancellation_is_persisted
+            ):
                 self._repository.set_status(normalized_id, "needs_attention", error_code=code)
             else:
                 self._repository.set_status(normalized_id, "failed", error_code=code)

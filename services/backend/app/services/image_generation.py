@@ -47,7 +47,7 @@ class ImageGenerationService:
                     error_code=None,
                 )
             guard.ensure_owned()
-            self._repository.set_status(task_id, "running")
+            self._repository.set_status(task_id, "running", error_code=None)
             outputs: dict[str, Any] = {}
             async for event in self._comfyui.track(prompt_id):
                 guard.ensure_owned()

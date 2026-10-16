@@ -27,6 +27,18 @@ class GenerationStatus(StrEnum):
     NEEDS_ATTENTION = "needs_attention"
 
 
+RECOVERABLE_PERSISTED_PROMPT_ERRORS = {
+    "REMOTE_SOFT_TIMEOUT",
+    "REMOTE_TUNNEL_UNAVAILABLE",
+    "REMOTE_UNAVAILABLE",
+    "REMOTE_TIMEOUT",
+    "DOWNLOAD_INTERRUPTED",
+    "STORAGE_WRITE_FAILED",
+    "GPU_LEASE_LOST",
+    "REMOTE_CANCEL_UNCONFIRMED",
+}
+
+
 class CreateGenerationCommand(BaseModel):
     tenant_id: UUID
     project_id: UUID

@@ -6,13 +6,17 @@ import json
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.domain.generation.models import GenerationEvent, GenerationStep, GenerationTask
 from app.domain.generation.models import UsageLedger
-from app.domain.generation.schemas import CreateGenerationCommand, GenerationStatus
+from app.domain.generation.schemas import (
+    RECOVERABLE_PERSISTED_PROMPT_ERRORS,
+    CreateGenerationCommand,
+    GenerationStatus,
+)
 from app.domain.assets.models import Asset
 from app.integrations.storage import StoredObject
 from app.domain.identity.models import Tenant
@@ -172,8 +176,15 @@ class GenerationRepository:
             return list(
                 db.scalars(
                     select(GenerationTask).where(
-                        GenerationTask.status.in_(
-                            {"draft", "queued", "planning", "remote_submitted", "running", "downloading", "cancelling"}
+                        or_(
+                            GenerationTask.status.in_(
+                                {"draft", "queued", "planning", "remote_submitted", "running", "downloading", "cancelling"}
+                            ),
+                            and_(
+                                GenerationTask.status == GenerationStatus.NEEDS_ATTENTION.value,
+                                GenerationTask.remote_prompt_id.is_not(None),
+                                GenerationTask.error_code.in_(RECOVERABLE_PERSISTED_PROMPT_ERRORS),
+                            ),
                         )
                     )
                 )

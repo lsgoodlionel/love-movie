@@ -113,3 +113,74 @@ def test_recovery_uses_real_sql_repository_and_persisted_prompt() -> None:
     assert comfy.tracked == ["prompt-persisted"]
     assert comfy.submitted == 0
     assert report.resumed == 1
+
+
+def test_recovery_resumes_soft_timeout_with_persisted_prompt() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    identity = IdentityRepository(engine, create_schema=True)
+    tenant, user = identity.create_tenant_with_user(
+        tenant_name="软超时恢复团队", email="soft-timeout@example.com", password="safe-password-123", role="creator"
+    )
+    principal = identity.authenticate("soft-timeout@example.com", "safe-password-123")
+    project = identity.create_project(principal, "软超时恢复项目")
+    repository = GenerationRepository(engine)
+    task, _ = repository.create_or_get_task(
+        CreateGenerationCommand(
+            tenant_id=tenant.id,
+            project_id=project.id,
+            created_by=user.id,
+            kind=GenerationKind.IMAGE,
+            parameters={"prompt": "晨雾"},
+            workflow_version="z_image_turbo:v1",
+        ),
+        "recover-soft-timeout-1",
+    )
+    repository.set_status(task.id, "running", remote_prompt_id="prompt-soft-timeout")
+    repository.mark_needs_attention(task.id, "REMOTE_SOFT_TIMEOUT")
+    dispatcher = Dispatcher()
+    comfy = Comfy()
+
+    report = asyncio.run(RecoveryCoordinator(repository, dispatcher, comfy).recover_incomplete_tasks())
+
+    assert dispatcher.queued == [task.id]
+    assert comfy.tracked == ["prompt-soft-timeout"]
+    assert comfy.submitted == 0
+    assert report.resumed == 1
+
+
+def test_recovery_rechecks_cancel_unconfirmed_with_persisted_prompt() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    identity = IdentityRepository(engine, create_schema=True)
+    tenant, user = identity.create_tenant_with_user(
+        tenant_name="取消恢复团队", email="cancel-recovery@example.com", password="safe-password-123", role="creator"
+    )
+    principal = identity.authenticate("cancel-recovery@example.com", "safe-password-123")
+    project = identity.create_project(principal, "取消恢复项目")
+    repository = GenerationRepository(engine)
+    task, _ = repository.create_or_get_task(
+        CreateGenerationCommand(
+            tenant_id=tenant.id,
+            project_id=project.id,
+            created_by=user.id,
+            kind=GenerationKind.IMAGE,
+            parameters={"prompt": "晨雾"},
+            workflow_version="z_image_turbo:v1",
+        ),
+        "recover-cancel-unconfirmed-1",
+    )
+    repository.set_status(task.id, "running", remote_prompt_id="prompt-cancel-unconfirmed")
+    repository.request_cancellation(tenant.id, task.id)
+    repository.mark_needs_attention(task.id, "REMOTE_CANCEL_UNCONFIRMED")
+    dispatcher = Dispatcher()
+    comfy = Comfy()
+
+    report = asyncio.run(RecoveryCoordinator(repository, dispatcher, comfy).recover_incomplete_tasks())
+
+    assert dispatcher.queued == [task.id]
+    assert comfy.tracked == ["prompt-cancel-unconfirmed"]
+    assert comfy.submitted == 0
+    assert report.resumed == 1

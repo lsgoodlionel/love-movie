@@ -11,6 +11,13 @@ class LeaseBackend(Protocol):
     async def release(self, key: str, token: str) -> bool: ...
 
 
+class GpuLeaseLostError(RuntimeError):
+    code = "GPU_LEASE_LOST"
+
+    def __init__(self) -> None:
+        super().__init__(self.code)
+
+
 class RedisLeaseBackend:
     _RENEW = """
     if redis.call('get', KEYS[1]) == ARGV[1] then
@@ -53,7 +60,7 @@ class LeaseGuard:
 
     def ensure_owned(self) -> None:
         if self.lost:
-            raise RuntimeError("GPU_LEASE_LOST")
+            raise GpuLeaseLostError()
 
 
 class GpuLease:

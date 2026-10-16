@@ -20,6 +20,7 @@ class Repo:
             remote_prompt_id=None,
         )
         self.timeline: list[str] = []
+        self.status_values: list[tuple[str, dict]] = []
 
     def get_task(self, task_id):
         return self.task
@@ -32,6 +33,7 @@ class Repo:
 
     def set_status(self, task_id, status, **values):
         self.timeline.append(status)
+        self.status_values.append((status, values))
         for key, value in values.items():
             setattr(self.task, key, value)
 
@@ -129,3 +131,13 @@ def test_progress_heartbeat_observes_cancellation_and_cancels_remote() -> None:
         asyncio.run(ImageGenerationService(repo, comfy, Storage(), Lease()).run("task-1"))
 
     assert comfy.cancelled == ["prompt-1"]
+
+
+def test_resumed_image_clears_stale_recovery_error_when_running() -> None:
+    repo = Repo()
+    repo.task.remote_prompt_id = "prompt-1"
+    service = ImageGenerationService(repo, Comfy(repo), Storage(), Lease())
+
+    asyncio.run(service.run("task-1"))
+
+    assert ("running", {"error_code": None}) in repo.status_values

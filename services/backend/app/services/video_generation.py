@@ -68,7 +68,12 @@ class VideoGenerationService:
                 if not image_prompt_id:
                     image_prompt_id = await self._comfyui.submit(first_frame_workflow, f"{task_id}:first-frame")
                     self._repository.persist_step_prompt(task_id, "first_frame", image_prompt_id)
-                self._repository.set_status(task_id, "running", remote_prompt_id=image_prompt_id)
+                self._repository.set_status(
+                    task_id,
+                    "running",
+                    remote_prompt_id=image_prompt_id,
+                    error_code=None,
+                )
                 image_output = await self._completed_output(task_id, image_prompt_id, guard, "images")
                 image_bytes = b"".join([
                     chunk async for chunk in self._guarded_download(task_id, image_prompt_id, guard, image_output)
@@ -120,7 +125,12 @@ class VideoGenerationService:
             if not video_prompt_id:
                 video_prompt_id = await self._comfyui.submit(video_workflow, f"{task_id}:video")
                 self._repository.persist_step_prompt(task_id, "video", video_prompt_id)
-            self._repository.set_status(task_id, "running", remote_prompt_id=video_prompt_id)
+            self._repository.set_status(
+                task_id,
+                "running",
+                remote_prompt_id=video_prompt_id,
+                error_code=None,
+            )
             video_output = await self._completed_output(task_id, video_prompt_id, guard, "gifs", "videos")
             video_filename = PurePosixPath(video_output["filename"]).name
             video_key = f"{task.tenant_id}/{task.project_id}/{task.id}/{video_filename}"

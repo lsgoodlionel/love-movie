@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from app.worker.gpu_lease import GpuLease
+from app.worker.gpu_lease import GpuLease, LeaseGuard
 
 
 class MemoryLeaseBackend:
@@ -55,4 +55,15 @@ def test_lost_ownership_is_exposed_before_next_remote_step() -> None:
             return await guard.renew()
 
     assert asyncio.run(scenario()) is False
+
+
+def test_lost_ownership_raises_stable_error_code() -> None:
+    guard = LeaseGuard(MemoryLeaseBackend(), "lease", "token", 30, lost=True)
+
+    try:
+        guard.ensure_owned()
+    except RuntimeError as exc:
+        assert getattr(exc, "code", None) == "GPU_LEASE_LOST"
+    else:
+        raise AssertionError("租约丢失必须抛出异常")
 
