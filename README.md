@@ -81,4 +81,4 @@ npx playwright test
 
 后续阶段将接续实现短故事配音字幕视频，以及小说/长文本拆解为分集、场景、镜头并批量生成可继续剪辑的素材。
 
-当前远程 Ollama 与 ComfyUI Tunnel 返回 Cloudflare `1033`（HTTP 530），因此本地功能、队列和恢复逻辑已验收，但真实远程图片/视频产物需在 Tunnel 恢复后补做受控烟雾测试。
+远程 Access 配置已通过宿主机和 API 容器双路径验证：Ollama、ComfyUI 均曾返回 200，模型清单和 CUDA 设备可读取。首次真实图片任务已取得并持久化 ComfyUI `prompt_id`，但等待期间 Tunnel 再次转为 Cloudflare `1033`（HTTP 530）；平台保留同一远程任务并进入可恢复追踪，不会盲目重复提交。图片产物、视频产物和网页播放仍需在 Tunnel 稳定后完成最终验收。

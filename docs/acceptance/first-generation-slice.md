@@ -14,7 +14,7 @@
 
 | 检查 | 结果 |
 |---|---|
-| `pytest -q` | 81 passed |
+| `pytest -q` | 88 passed |
 | `npm test -- --run` | 5 passed |
 | `npm run typecheck` | passed |
 | `npm run build` | passed，`/login`、`/generate`、`/assets` 已生成 |
@@ -35,7 +35,11 @@
 
 ## 远程受控烟雾验收
 
-使用本机安全保存的网站 Service Token 分别检查 Ollama `/api/tags` 与 ComfyUI `/system_stats`，两个入口均返回 Cloudflare Tunnel `1033`（HTTP 530）。根据恢复规则，本次没有提交 `/prompt`，因此没有重复任务或远程 GPU 消耗。待 Tunnel 恢复后再执行一张最小图片和一个 81 帧视频的真实验收。
+已将本机安全保存的网站 Service Token 注入 Git 忽略且权限为 `0600` 的本地 `.env`，没有输出或提交凭据。宿主机与 API 容器双路径检查中，Ollama `/api/tags` 和 ComfyUI `/system_stats` 均返回 200；检测到 10 个 Ollama 模型（包含三条默认路由所需模型）和 1 个 CUDA 设备。
+
+随后通过真实 Web API 创建图片任务 `5f206e65-381f-4f40-bb5a-f93ab2a74594`，API → Redis → Worker → ComfyUI 成功，远程 `prompt_id` 已持久化。任务等待前序队列期间 ComfyUI Tunnel 再次返回 `1033`（HTTP 530），追踪窗口耗尽暴露出任务被误标为 `failed/REMOTE_SOFT_TIMEOUT` 的恢复缺口。已用回归测试修复：持久化远程 ID 的软超时现在进入可恢复状态；GPU 租约丢失使用稳定错误码；运行中取消与远程取消未确认会保留取消意图并进入 history/queue 恢复；Worker 重启使用同一 `prompt_id`，恢复为运行态时清除过期错误。修复后后端为 88 passed，真实任务已验证恢复到 `running`，没有第二次 `/prompt`。
+
+由于 Tunnel 仍不稳定，本次尚未取得最终图片文件，也未继续提交视频任务。待 connector 稳定后继续跟踪上述远程任务；图片成功转存并预览后，再提交一个 81 帧视频完成最终验收。
 
 记录只保留脱敏任务 ID、工作流版本、耗时和结果，不记录私密提示词、Access Header、Secret 或原始远程日志。
 

@@ -15,7 +15,7 @@
 
 1. PostgreSQL 是任务、步骤和素材的权威状态。
 2. Worker 启动会扫描未完成任务；已保存 `remote_prompt_id` 的任务先查询 ComfyUI history，再查询 queue，并用同一任务和 prompt 恢复追踪。
-3. Cloudflare `1033`、WebSocket 中断或 Worker 重启都不能授权再次调用 `/prompt`。
+3. Cloudflare `1033`、WebSocket 中断或 Worker 重启都不能授权再次调用 `/prompt`。已有 `prompt_id` 的 `REMOTE_SOFT_TIMEOUT`、Tunnel/网络错误、下载中断或对象存储暂时失败进入可恢复的“需人工处理”范围；Worker 重启后仍先查 history/queue 并复用同一远程任务。
 4. 提交结果不确定且没有持久化 `prompt_id` 时，将任务置为 `needs_attention`，禁止自动重复生成。
 5. Redis GPU 租约使用 owner token、TTL、续租和 compare-and-delete；租约丢失后下一远程步骤必须停止。
 6. 取消已提交任务时，平台先记录取消意图，再尝试从 ComfyUI queue 删除并中断当前单 GPU 作业；远程取消未确认会写入事件，但本地不会继续下载或归档结果。
@@ -23,7 +23,7 @@
 ## 常见稳定错误码
 
 - `REMOTE_AUTH_FAILED`：检查 Service Token 是否存在和权限是否正确，不记录其值。
-- `REMOTE_TIMEOUT` / `REMOTE_SOFT_TIMEOUT`：先查远程 history/queue，避免重复提交。
+- `REMOTE_TIMEOUT` / `REMOTE_SOFT_TIMEOUT`：已有 `prompt_id` 时保留为可恢复任务，先查远程 history/queue，避免重复提交；没有远程 ID 时根据发生阶段转人工处理或失败。
 - `REMOTE_SUBMISSION_UNKNOWN`：`POST /prompt` 结果不确定，任务进入人工处理，不得自动再次提交。
 - `REMOTE_CANCEL_UNCONFIRMED`：保持人工处理状态，先确认 queue/history，避免把仍在运行的任务误报为已取消。
 - `REMOTE_OUT_OF_MEMORY`：确认 Ollama 已按 `keep_alive: "0s"` 卸载，再检查 GPU 占用。
