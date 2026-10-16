@@ -1,0 +1,2 @@
+class UnknownWorkflow(KeyError):
+    pass

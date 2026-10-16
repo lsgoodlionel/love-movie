@@ -5,6 +5,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.domain.identity.models import Base
+from app.domain.ai_resources import models as ai_resource_models  # noqa: F401
 from app.domain.assets import models as asset_models  # noqa: F401
 from app.domain.generation import models as generation_models  # noqa: F401
 
