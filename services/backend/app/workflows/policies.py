@@ -47,7 +47,7 @@ class VideoParameters(BaseModel):
     height: int = Field(default=512, ge=512, le=512)
     frames: int = Field(default=81, ge=81, le=81)
     fps: int = Field(default=16, ge=16, le=16)
-    steps: int = Field(default=20, ge=1, le=20)
+    steps: int = Field(default=20, ge=20, le=20)
     seed: int = Field(default=0, ge=0, le=2**63 - 1)
     camera_pose: CameraPose = "Zoom In"
     camera_speed: float = Field(default=0.45, ge=0.1, le=1.0)

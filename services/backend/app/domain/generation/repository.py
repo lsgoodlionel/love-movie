@@ -4,7 +4,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
-from app.domain.generation.models import GenerationTask
+from app.domain.generation.models import GenerationStep, GenerationTask
 from app.domain.generation.models import UsageLedger
 from app.domain.generation.schemas import CreateGenerationCommand, GenerationStatus
 from app.domain.assets.models import Asset
@@ -66,7 +66,13 @@ class GenerationRepository:
                     raise ValueError(f"不允许更新字段：{name}")
                 setattr(task, name, value)
 
-    def persist_asset(self, task_id: Any, stored: StoredObject, kind: str) -> Asset:
+    def persist_asset(
+        self,
+        task_id: Any,
+        stored: StoredObject,
+        kind: str,
+        parent_asset_id: Any | None = None,
+    ) -> Asset:
         with self._sessions.begin() as db:
             task = db.get(GenerationTask, task_id)
             if task is None:
@@ -75,6 +81,7 @@ class GenerationRepository:
                 tenant_id=task.tenant_id,
                 project_id=task.project_id,
                 generation_task_id=task.id,
+                parent_asset_id=parent_asset_id,
                 kind=kind,
                 object_key=stored.key,
                 content_type=stored.content_type,
@@ -84,6 +91,36 @@ class GenerationRepository:
             db.add(asset)
             db.flush()
             return asset
+
+    def persist_plan(self, task_id: Any, plan: Any) -> None:
+        with self._sessions.begin() as db:
+            task = db.get(GenerationTask, task_id)
+            if task is None:
+                raise LookupError("生成任务不存在")
+            parameters = dict(task.parameters)
+            parameters["plan"] = plan.model_dump()
+            task.parameters = parameters
+
+    def persist_step_prompt(self, task_id: Any, step: str, prompt_id: str) -> None:
+        with self._sessions.begin() as db:
+            record = db.scalar(
+                select(GenerationStep).where(
+                    GenerationStep.generation_task_id == task_id,
+                    GenerationStep.name == step,
+                )
+            )
+            if record is None:
+                record = GenerationStep(
+                    generation_task_id=task_id,
+                    name=step,
+                    status="remote_submitted",
+                    remote_prompt_id=prompt_id,
+                    attempt_count=1,
+                )
+                db.add(record)
+            else:
+                record.status = "remote_submitted"
+                record.remote_prompt_id = prompt_id
 
     def record_usage(self, task_id: Any, **values: Any) -> None:
         with self._sessions.begin() as db:

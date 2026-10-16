@@ -102,6 +102,27 @@ class ComfyUIAdapter:
         except httpx.HTTPError as exc:
             raise RemoteServiceError("DOWNLOAD_INTERRUPTED", "生成结果下载中断") from exc
 
+    async def upload_image(self, name: str, content: bytes, *, overwrite: bool = False) -> str:
+        try:
+            response = await self._client.post(
+                "/upload/image",
+                headers=self._access.as_dict(),
+                data={"type": "input", "overwrite": str(overwrite).lower()},
+                files={"image": (name, content, "image/png")},
+            )
+        except httpx.TimeoutException as exc:
+            raise RemoteServiceError("REMOTE_TIMEOUT", "首帧上传超时") from exc
+        except httpx.HTTPError as exc:
+            raise RemoteServiceError("REMOTE_UNAVAILABLE", "首帧上传失败") from exc
+        self._raise_for_response(response)
+        try:
+            result = response.json()
+            uploaded_name = str(result["name"])
+            subfolder = str(result.get("subfolder", "")).strip("/")
+            return f"{subfolder}/{uploaded_name}" if subfolder else uploaded_name
+        except (ValueError, KeyError, TypeError) as exc:
+            raise RemoteServiceError("REMOTE_INVALID_RESPONSE", "首帧上传响应格式不正确") from exc
+
     @staticmethod
     def _raise_for_response(response: httpx.Response) -> None:
         text = response.text.lower()

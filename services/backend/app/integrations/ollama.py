@@ -12,7 +12,13 @@ from app.integrations.errors import RemoteServiceError
 @dataclass(frozen=True)
 class PlannedPrompts:
     image_prompt: str
-    video_prompt: str
+    motion_prompt: str
+    negative_prompt: str = ""
+    title: str = ""
+
+    @property
+    def video_prompt(self) -> str:
+        return self.motion_prompt
 
 
 class OllamaAdapter:
@@ -55,9 +61,12 @@ class OllamaAdapter:
         try:
             body = response.json()
             planned = json.loads(body["response"])
+            motion_prompt = planned.get("motion_prompt", planned.get("video_prompt"))
             return PlannedPrompts(
                 image_prompt=str(planned["image_prompt"]),
-                video_prompt=str(planned["video_prompt"]),
+                motion_prompt=str(motion_prompt),
+                negative_prompt=str(planned.get("negative_prompt", "")),
+                title=str(planned.get("title", "")),
             )
         except (ValueError, KeyError, TypeError) as exc:
             raise RemoteServiceError("REMOTE_INVALID_RESPONSE", "远程文本模型返回格式不正确") from exc

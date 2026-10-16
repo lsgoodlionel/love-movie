@@ -9,7 +9,7 @@ from app.domain.generation.repository import GenerationRepository
 from app.domain.generation.schemas import CreateGenerationCommand, GenerationKind
 from app.domain.identity.permissions import can_create_generation
 from app.domain.identity.repository import IdentityRepository
-from app.workflows.policies import ImageParameters
+from app.workflows.policies import ImageParameters, VideoParameters
 
 
 router = APIRouter(prefix="/api/v1/generations", tags=["生成"])
@@ -29,6 +29,15 @@ class CreateImageRequest(BaseModel):
 class GenerationAccepted(BaseModel):
     task_id: UUID
     status: str
+
+
+class CreateVideoRequest(BaseModel):
+    project_id: UUID
+    prompt: str = Field(min_length=1, max_length=4000)
+    camera_pose: str = "Zoom In"
+    camera_speed: float = 0.45
+    seed: int = 0
+    adult_content_declared: bool = False
 
 
 def get_generation_repository(request: Request) -> GenerationRepository:
@@ -67,6 +76,50 @@ async def create_image(
         kind=GenerationKind.IMAGE,
         parameters=parameters.model_dump(),
         workflow_version="z_image_turbo:v1",
+    )
+    task, created = repository.create_or_get_task(command, idempotency_key)
+    if created:
+        repository.set_status(task.id, "queued")
+        try:
+            await dispatcher.enqueue_generation(task.id)
+        except Exception as exc:
+            repository.set_status(task.id, "needs_attention", error_code="DISPATCH_FAILED")
+            raise HTTPException(status_code=503, detail="生成任务入队失败，可安全重试") from exc
+    return GenerationAccepted(task_id=task.id, status="queued" if created else task.status)
+
+
+@router.post("/videos", response_model=GenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
+async def create_video(
+    payload: CreateVideoRequest,
+    principal: CurrentPrincipal,
+    identity: Annotated[IdentityRepository, Depends(get_identity_repository)],
+    repository: Annotated[GenerationRepository, Depends(get_generation_repository)],
+    dispatcher: Annotated[Any, Depends(get_dispatcher)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=160)],
+) -> GenerationAccepted:
+    if not can_create_generation(principal.role):
+        raise HTTPException(status_code=403, detail="当前角色无权创建生成任务")
+    project, cross_tenant = identity.get_project(principal, payload.project_id)
+    if cross_tenant or project is None:
+        raise HTTPException(status_code=403 if cross_tenant else 404, detail="无权访问该项目" if cross_tenant else "项目不存在")
+    try:
+        policy = VideoParameters(
+            prompt=payload.prompt,
+            camera_pose=payload.camera_pose,
+            camera_speed=payload.camera_speed,
+            seed=payload.seed,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="视频参数不符合当前单镜头生成限制") from exc
+    parameters = policy.model_dump()
+    parameters["adult_content_declared"] = payload.adult_content_declared
+    command = CreateGenerationCommand(
+        tenant_id=principal.tenant_id,
+        project_id=payload.project_id,
+        created_by=principal.user_id,
+        kind=GenerationKind.VIDEO,
+        parameters=parameters,
+        workflow_version="z_image_turbo:v1+wan_i2v:v1",
     )
     task, created = repository.create_or_get_task(command, idempotency_key)
     if created:
