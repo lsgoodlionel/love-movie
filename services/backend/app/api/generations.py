@@ -1,0 +1,79 @@
+from typing import Annotated, Any
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import BaseModel, Field, ValidationError
+
+from app.api.dependencies import CurrentPrincipal, get_identity_repository
+from app.domain.generation.repository import GenerationRepository
+from app.domain.generation.schemas import CreateGenerationCommand, GenerationKind
+from app.domain.identity.permissions import can_create_generation
+from app.domain.identity.repository import IdentityRepository
+from app.workflows.policies import ImageParameters
+
+
+router = APIRouter(prefix="/api/v1/generations", tags=["生成"])
+
+
+class CreateImageRequest(BaseModel):
+    project_id: UUID
+    prompt: str = Field(min_length=1, max_length=4000)
+    width: int = 768
+    height: int = 1024
+    steps: int = 8
+    batch_size: int = 1
+    seed: int = 0
+    adult_content_declared: bool = False
+
+
+class GenerationAccepted(BaseModel):
+    task_id: UUID
+    status: str
+
+
+def get_generation_repository(request: Request) -> GenerationRepository:
+    return request.app.state.generation_repository
+
+
+def get_dispatcher(request: Request) -> Any:
+    dispatcher = request.app.state.generation_dispatcher
+    if dispatcher is None:
+        raise HTTPException(status_code=503, detail="生成队列尚未就绪")
+    return dispatcher
+
+
+@router.post("/images", response_model=GenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
+async def create_image(
+    payload: CreateImageRequest,
+    principal: CurrentPrincipal,
+    identity: Annotated[IdentityRepository, Depends(get_identity_repository)],
+    repository: Annotated[GenerationRepository, Depends(get_generation_repository)],
+    dispatcher: Annotated[Any, Depends(get_dispatcher)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=160)],
+) -> GenerationAccepted:
+    if not can_create_generation(principal.role):
+        raise HTTPException(status_code=403, detail="当前角色无权创建生成任务")
+    project, cross_tenant = identity.get_project(principal, payload.project_id)
+    if cross_tenant or project is None:
+        raise HTTPException(status_code=403 if cross_tenant else 404, detail="无权访问该项目" if cross_tenant else "项目不存在")
+    try:
+        parameters = ImageParameters.model_validate(payload.model_dump(exclude={"project_id"}))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="图片参数不符合生成限制") from exc
+    command = CreateGenerationCommand(
+        tenant_id=principal.tenant_id,
+        project_id=payload.project_id,
+        created_by=principal.user_id,
+        kind=GenerationKind.IMAGE,
+        parameters=parameters.model_dump(),
+        workflow_version="z_image_turbo:v1",
+    )
+    task, created = repository.create_or_get_task(command, idempotency_key)
+    if created:
+        repository.set_status(task.id, "queued")
+        try:
+            await dispatcher.enqueue_generation(task.id)
+        except Exception as exc:
+            repository.set_status(task.id, "needs_attention", error_code="DISPATCH_FAILED")
+            raise HTTPException(status_code=503, detail="生成任务入队失败，可安全重试") from exc
+    return GenerationAccepted(task_id=task.id, status="queued" if created else task.status)
