@@ -22,12 +22,19 @@ class Repo:
     def __init__(self, tasks: list[Task]) -> None:
         self.tasks = tasks
         self.attention: list[str] = []
+        self.confirmed: list[str] = []
 
     def incomplete_tasks(self):
         return self.tasks
 
     def mark_needs_attention(self, task_id: str, code: str):
         self.attention.append(task_id)
+
+    def set_status(self, task_id: str, status: str):
+        return None
+
+    def mark_dispatch_confirmed(self, task_id: str):
+        self.confirmed.append(task_id)
 
 
 class Dispatcher:
