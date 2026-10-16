@@ -40,7 +40,7 @@
 ## File Structure
 
 ```text
-ai-video-studio/
+love-movie/
 ├── apps/web/                         # Next.js 中文 Web 客户端
 │   ├── app/(auth)/login/
 │   ├── app/(studio)/generate/

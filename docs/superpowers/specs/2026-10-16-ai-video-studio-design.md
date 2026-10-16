@@ -2,7 +2,8 @@
 
 - 日期：2026-10-16
 - 状态：已确认，并合并 2026-10-16 远程生产链交接
-- 项目路径：`/Users/lionel/Documents/New project/ai-video-studio`
+- 最终本地仓库：`/Users/lionel/Develop/love-movie`
+- 隔离开发检出：`/Users/lionel/Documents/New project/love-movie-work`
 - 首要交付：在 Web 页面输入文字，真实生成、预览并管理图片和视频
 
 ## 1. 产品目标
