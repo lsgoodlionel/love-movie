@@ -20,7 +20,11 @@
 - ComfyUI 只运行仓库内审核过的白名单模板；前端不得提交 workflow JSON。
 - 尺寸、帧数、采样步数、批量数、提示词长度和文件大小必须由服务端硬限制，不能只依赖前端校验。
 - ComfyUI 输出必须下载、校验并转存 MinIO；不得把 `/view` 临时 URL 保存为正式素材 URL。
+- ComfyUI WebSocket 只提供实时进度，`GET /history/{prompt_id}` 是最终结果权威来源；Cloudflare `1033` 不代表 GPU 任务失败。
 - 所有生成请求先持久化，再入队；`prompt_id` 收到后立即持久化；无法确认提交结果时不得盲目重复 `/prompt`。
+- Ollama 模型路由、ComfyUI 工作流版本、远端节点和能力标签必须由后台配置资源管理，业务代码不得写死选择逻辑或服务器域名。
+- 当前 Wan 1.3B 单镜头固定为约 5 秒能力边界；后续 30 秒短片必须采用 6×约 5 秒镜头和逐镜头审核/重试，不得尝试一次生成 30 秒。
+- 内部版本也必须记录内容安全判断和成年人确认；任何涉及未成年人的性化内容在入队前拒绝，并按租户记录 GPU 秒数和存储用量。
 - 只提交本项目文件；`.env`、Secret、生成素材和测试下载文件必须被 Git 忽略。
 
 ## Review Focus
@@ -29,7 +33,7 @@
 - Worker 在获得 `prompt_id` 后崩溃：Task 6/7 必须证明重启后查询远端 history 并恢复，而不是再次调用 `/prompt`。
 - 两个图片/视频任务同时到达：Task 6 必须证明 Ollama 与 ComfyUI 重型阶段不会并发占用 GPU。
 - 用户尝试越权读取他人项目素材或提交超限参数：Task 2、4、9 必须证明返回 403/422 且不入队。
-- 远端返回含凭据、HTML 或畸形 JSON 的错误：Task 5 必须证明日志和 API 错误均脱敏，任务进入可诊断失败状态。
+- 远端返回 Cloudflare `1033`、含凭据 HTML 或畸形 JSON：Task 5/6 必须证明日志和 API 错误均脱敏，已有 `prompt_id` 的任务查询 history/queue 而不重复提交。
 
 ---
 
@@ -61,6 +65,8 @@ ai-video-studio/
 ├── .env.example
 └── README.md
 ```
+
+本计划只交付单镜头真实闭环。它完成后分别创建两个后续计划：第一份实现视觉圣经、6×约 5 秒镜头、关键帧/抽帧审核、FFmpeg 合成和简化时间线；第二份实现作品/卷章/分集/场景/镜头层级、长文本分块索引、一致性检查和多节点能力调度。
 
 ## Task 1: 可运行的仓库基线与本地基础设施
 
@@ -164,7 +170,7 @@ git commit -m "feat: add internal identity and project roles"
 
 - [ ] **Step 1: Write failing state-transition, idempotency and lineage tests**
 
-Assert invalid transitions raise `InvalidTransition`; two concurrent inserts with the same tenant and idempotency key return one task; a video asset can reference the generated first-frame asset and originating task.
+Assert invalid transitions raise `InvalidTransition`; two concurrent inserts with the same tenant and idempotency key return one task; a video asset can reference the generated first-frame asset and originating task；usage/audit rows retain requested model, actual model, GPU seconds, content-safety decision and adult-content declaration without storing credentials.
 
 - [ ] **Step 2: Run focused tests and verify failure**
 
@@ -189,20 +195,22 @@ git add services/backend/app/domain services/backend/alembic services/backend/te
 git commit -m "feat: model generation tasks and assets"
 ```
 
-## Task 4: 白名单工作流注册表与参数硬限制
+## Task 4: 后台 AI 资源、白名单工作流与参数硬限制
 
 **Files:**
-- Create: `services/backend/app/workflows/registry.py`, `policies.py`, `exceptions.py`
+- Create: `services/backend/app/domain/ai_resources/models.py`, `schemas.py`, `repository.py`
+- Create: `services/backend/app/workflows/registry.py`, `model_router.py`, `policies.py`, `exceptions.py`
 - Create: `services/backend/app/workflows/templates/z_image_turbo_v1.json`
 - Create: `services/backend/app/workflows/templates/wan_i2v_v1.json`
-- Test: `services/backend/tests/workflows/test_registry.py`, `test_parameter_policy.py`, `test_template_injection.py`
+- Create: `services/backend/alembic/versions/0003_ai_resources.py`
+- Test: `services/backend/tests/workflows/test_registry.py`, `test_model_router.py`, `test_parameter_policy.py`, `test_template_injection.py`
 
 **Interfaces:**
-- Produces: `WorkflowRegistry.get(name, version) -> WorkflowTemplate`; `render_image_workflow(ImageParameters) -> dict`; `render_video_workflow(VideoParameters, uploaded_image_name) -> dict`.
+- Produces: models `ComputeNode`, `WorkflowDefinition`, `ModelRoute`; `WorkflowRegistry.get(name, version) -> WorkflowTemplate`; `ModelRouter.select(capability, quality) -> ModelSelection`; `render_image_workflow(ImageParameters) -> dict`; `render_video_workflow(VideoParameters, uploaded_image_name) -> dict`.
 
 - [ ] **Step 1: Write failing allowlist and limit tests**
 
-Assert unknown workflows are rejected; arbitrary JSON is never accepted; prompt length, width, height, steps, frame count and batch size over server limits produce field-specific validation errors before queueing.
+Assert unknown workflows are rejected; arbitrary JSON is never accepted; prompt length, width, height, steps, frame count, batch size, per-tenant GPU seconds and storage usage over server limits produce field-specific validation errors before queueing. Assert sexualized-minor content is rejected before queueing and adult-content requests require an explicit adult declaration. Assert the default model route is `qwen3.5:4b` for cleanup/JSON repair, `qwen3.5:latest` for story/shot planning and `gemma4:12b` for dialogue enhancement; 27B/31B routes require asynchronous high-quality or explicit manual mode.
 
 - [ ] **Step 2: Run focused tests and verify failure**
 
@@ -210,11 +218,11 @@ Run: `cd services/backend && uv run pytest tests/workflows -q`
 
 - [ ] **Step 3: Import and sanitize the two verified workflow structures**
 
-Use `/Users/lionel/Develop/comfyui-api-handoff/z-image-bedroom-api.json` and `wan-bedroom-video-api.json` only as structural sources. Replace example prompts, input filenames, seeds and output prefixes with runtime-injected values; keep reviewed model/node topology and assign immutable version `v1`.
+Use the checksum-verified `/Users/lionel/Develop/comfyui-api-handoff/z-image-bedroom-api.json` and `wan-bedroom-video-api.json` only as structural sources. Replace example prompts, input filenames, seeds and output prefixes with runtime-injected values; remove the synchronous WebP output from the production video template; keep reviewed model/node topology and assign immutable version `v1`.
 
-- [ ] **Step 4: Implement typed policies and deterministic template injection**
+- [ ] **Step 4: Implement configurable resources, model routing and deterministic template injection**
 
-Normal-user defaults and maxima live in `policies.py`; the API may expose allowed choices but cannot override maxima. Template rendering deep-copies the source and only changes declared node/input paths.
+Seed remote nodes, workflow metadata and model routes into database resources without secrets. Normal-user defaults and maxima live in `policies.py`; the API may expose allowed choices but cannot override maxima. Template rendering deep-copies the source and only changes declared node/input paths. Record requested model, actual model and fallback reason.
 
 - [ ] **Step 5: Run workflow tests and snapshot rendered node changes**
 
@@ -225,8 +233,8 @@ Expected: PASS and snapshots prove no undeclared node changed.
 - [ ] **Step 6: Commit reviewed workflows and policies**
 
 ```bash
-git add services/backend/app/workflows services/backend/tests/workflows
-git commit -m "feat: add restricted comfyui workflows"
+git add services/backend/app/domain/ai_resources services/backend/app/workflows services/backend/alembic services/backend/tests/workflows
+git commit -m "feat: configure ai resources and workflows"
 ```
 
 ## Task 5: Ollama、ComfyUI 与对象存储适配器
@@ -236,11 +244,12 @@ git commit -m "feat: add restricted comfyui workflows"
 - Test: `services/backend/tests/integrations/test_ollama.py`, `test_comfyui.py`, `test_storage.py`, `test_redaction.py`
 
 **Interfaces:**
+- Consumes: enabled `ComputeNode` and `ModelRoute` records from Task 4; Access Secret remains environment-only.
 - Produces: `OllamaAdapter.plan_video_text(request) -> PlannedPrompts`; `OllamaAdapter.wait_until_unloaded(timeout) -> None`; `ComfyUIAdapter.submit(workflow, client_id) -> prompt_id`; `track(prompt_id) -> AsyncIterator[ProgressEvent]`; `download_output(output) -> AsyncIterator[bytes]`; `StorageAdapter.put_stream(...) -> StoredObject` and `presign_get(key, ttl_seconds=300) -> str`.
 
 - [ ] **Step 1: Write failing adapter contract and redaction tests**
 
-Use mocked HTTP/WS servers. Assert both Access headers are attached server-side, `keep_alive` is exactly `0s`, `prompt_id` is parsed, WS failure falls back to history polling, and secrets/HTML/malformed payloads never appear in raised public errors or captured logs.
+Use mocked HTTP/WS servers. Assert both Access headers are attached server-side, `keep_alive` is exactly `0s`, `prompt_id` is parsed, WS failure falls back to authoritative history polling, and secrets/HTML/malformed payloads never appear in raised public errors or captured logs. Cover Access 401/403, Cloudflare `1033`, ComfyUI validation error, OOM, remote soft timeout, interrupted download and storage failure as distinct stable error codes.
 
 - [ ] **Step 2: Run integration tests and verify failure**
 
@@ -252,7 +261,7 @@ Secrets remain `SecretStr` until header construction. Define bounded connect/rea
 
 - [ ] **Step 4: Implement Ollama and ComfyUI clients**
 
-ComfyUI tracking prefers WebSocket `/ws?clientId=...`, reconnects with a bound, and falls back to `/history/{prompt_id}`. No adapter method performs an implicit second `/prompt` submission.
+ComfyUI tracking prefers WebSocket `/ws?clientId=...` for progress, reconnects with a bound, and always uses `/history/{prompt_id}` as the final result authority. `1033` triggers bounded backoff and later history/queue reconciliation, never an implicit second `/prompt` submission.
 
 - [ ] **Step 5: Implement streaming object storage and integrity checks**
 
@@ -300,7 +309,7 @@ Use an owner token, finite TTL, heartbeat renewal and compare-and-delete release
 
 - [ ] **Step 5: Implement startup recovery decisions**
 
-Queued tasks are re-enqueued; tasks with `remote_prompt_id` resume tracking; tasks whose submission outcome is unknown move to `NEEDS_ATTENTION`; completed/cancelled tasks are untouched.
+Queued tasks are re-enqueued；tasks with `remote_prompt_id` first query history, then queue, and resume tracking；tasks whose submission outcome is unknown move to `NEEDS_ATTENTION`；completed/cancelled tasks are untouched. A persisted `1033` error alone never authorizes resubmission.
 
 - [ ] **Step 6: Run worker tests**
 
@@ -355,7 +364,7 @@ git add services/backend/app/services/image_generation.py services/backend/app/a
 git commit -m "feat: generate and persist images"
 ```
 
-## Task 8: 文字规划、首帧与图生视频纵向切片
+## Task 8: 模型路由、首帧与单镜头图生视频纵向切片
 
 **Files:**
 - Create: `services/backend/app/services/video_generation.py`, `planning.py`
@@ -368,7 +377,7 @@ git commit -m "feat: generate and persist images"
 
 - [ ] **Step 1: Write failing video orchestration tests**
 
-Assert exact order: Ollama plan with `keep_alive: "0s"`, unload confirmation, image submit, first-frame persist, image upload, video submit, video persist. Assert Ollama unload timeout prevents ComfyUI submission and two stages each persist their own `prompt_id` before tracking.
+Assert exact order: select configured planning model, Ollama plan with `keep_alive: "0s"`, unload confirmation, image submit, first-frame persist, collision-safe image upload, video submit, video persist. Assert Ollama unload timeout prevents ComfyUI submission and two stages each persist their own `prompt_id` before tracking. Assert upload names include tenant/project/task plus a random suffix and use `overwrite=false`.
 
 - [ ] **Step 2: Run focused tests and verify failure**
 
@@ -376,11 +385,11 @@ Run: `cd services/backend && uv run pytest tests/services/test_planning.py tests
 
 - [ ] **Step 3: Implement structured planning schema and validation**
 
-`PlannedPrompts` contains `image_prompt`, `motion_prompt`, `negative_prompt` and `title`; reject missing or oversized fields before GPU generation.
+`PlannedPrompts` contains `image_prompt`, `motion_prompt`, `negative_prompt` and `title`; reject missing or oversized fields before GPU generation. Use configured default `qwen3.5:latest` for story/shot planning and `qwen3.5:4b` for prompt cleanup/JSON repair, with schema validation after every model response.
 
 - [ ] **Step 4: Implement video endpoint and orchestration**
 
-Persist the Ollama plan, first-frame asset and final video as separate lineage records. Use one task with recoverable steps and never hide a successful first frame when video generation fails.
+Persist the Ollama plan, requested/actual model, fallback reason, first-frame asset and final video as separate lineage records. Use one task with recoverable steps and never hide a successful first frame when video generation fails. Enforce the verified single-shot policy of 512×512, 81 frames, 16 FPS, 20 steps and an allowed camera-pose enum; longer videos belong to the successor multi-shot plan.
 
 - [ ] **Step 5: Run video slice tests**
 
@@ -484,17 +493,17 @@ git commit -m "feat: add web generation studio"
 
 **Files:**
 - Create: `e2e/playwright.config.ts`, `e2e/generation.spec.ts`, `e2e/recovery.spec.ts`
-- Create: `services/backend/app/api/admin_health.py`
-- Test: `services/backend/tests/api/test_admin_health.py`
+- Create: `services/backend/app/api/admin_health.py`, `admin_ai_resources.py`
+- Test: `services/backend/tests/api/test_admin_health.py`, `test_admin_ai_resources.py`
 - Create: `docs/deployment.md`, `docs/operations.md`, `docs/acceptance/first-generation-slice.md`
 - Modify: `README.md`, `docker-compose.yml`
 
 **Interfaces:**
-- Produces: owner/admin-only `GET /api/v1/admin/health`; documented local startup, secret injection, backup, recovery and remote smoke procedures.
+- Produces: owner/admin-only `GET /api/v1/admin/health`; CRUD/enable/disable endpoints for compute nodes, workflow metadata and model routes that never accept or return Access Secret; documented local startup, secret injection, backup, recovery and remote smoke procedures.
 
 - [ ] **Step 1: Write failing admin-health and browser tests**
 
-Admin health must report component state without secrets; browser flow covers login, image creation, refresh recovery, preview, download and video creation using deterministic adapter fakes.
+Admin health must report component state without secrets; resource API tests prove reviewers/creators receive 403, administrators can change route priority and enable state, and no response accepts or returns credential fields. Browser flow covers login, image creation, refresh recovery, preview, download and single-shot video creation using deterministic adapter fakes.
 
 - [ ] **Step 2: Run focused tests and verify failure**
 
@@ -504,11 +513,11 @@ Run: `cd e2e && npx playwright test`
 
 - [ ] **Step 3: Implement admin health and deterministic E2E adapter mode**
 
-Fake mode is allowed only when `APP_ENV=test`; production startup fails if fake adapters are requested. Health output includes PostgreSQL, Redis, MinIO, Worker, Ollama and ComfyUI status plus queue length and current lease task ID.
+Fake mode is allowed only when `APP_ENV=test`; production startup fails if fake adapters are requested. Health output includes PostgreSQL, Redis, MinIO, Worker, Ollama and ComfyUI status plus queue length and current lease task ID. Implement resource administration as metadata/configuration only; Service Token values remain environment-only.
 
 - [ ] **Step 4: Add recovery and concurrency browser/API scenarios**
 
-Test browser refresh, duplicate Idempotency-Key, two simultaneous jobs, Worker restart with persisted `prompt_id`, remote timeout and cross-project asset denial.
+Test browser refresh, duplicate Idempotency-Key, two simultaneous jobs, Worker restart with persisted `prompt_id`, Cloudflare `1033`, Access denial, OOM, remote timeout and cross-project asset denial. For every post-submit fault, assert history/queue reconciliation occurs before any retry decision.
 
 - [ ] **Step 5: Document deployment and secret handling**
 
@@ -528,7 +537,7 @@ Expected: all suites PASS; `docker compose ps` reports healthy core services.
 
 - [ ] **Step 7: Run the controlled remote smoke test**
 
-Inject the existing website Service Token into the backend process without echoing it. Generate one minimal image and one minimal video; verify Ollama `/api/tags` and ComfyUI `/system_stats` health, strict GPU serialization, platform-owned object keys, browser playback and absence of credentials in logs.
+Inject the existing website Service Token into the backend process without echoing it. Generate one minimal image and one 81-frame video; verify Ollama `/api/tags` and ComfyUI `/system_stats` health, strict GPU serialization, requested/actual model audit, authoritative history lookup, platform-owned object keys, ffprobe decode metadata, browser playback and absence of credentials in logs.
 
 - [ ] **Step 8: Record sanitized acceptance evidence and update project status**
 
@@ -537,7 +546,7 @@ Write command, commit, environment, workflow version, task IDs, timings and pass
 - [ ] **Step 9: Commit the verified delivery**
 
 ```bash
-git add README.md docker-compose.yml e2e services/backend/app/api/admin_health.py services/backend/tests/api/test_admin_health.py docs/deployment.md docs/operations.md docs/acceptance
+git add README.md docker-compose.yml e2e services/backend/app/api/admin_health.py services/backend/app/api/admin_ai_resources.py services/backend/tests/api/test_admin_health.py services/backend/tests/api/test_admin_ai_resources.py docs/deployment.md docs/operations.md docs/acceptance
 git commit -m "test: verify first generation slice"
 ```
 
