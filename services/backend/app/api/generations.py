@@ -51,6 +51,22 @@ def get_dispatcher(request: Request) -> Any:
     return dispatcher
 
 
+async def _dispatch_if_needed(repository: GenerationRepository, dispatcher: Any, task: Any, created: bool) -> str:
+    retryable = (task.status == "queued" and task.dispatch_confirmed_at is None) or (
+        task.status == "needs_attention" and task.error_code == "DISPATCH_FAILED"
+    )
+    if not created and not retryable:
+        return task.status
+    repository.set_status(task.id, "queued", error_code=None)
+    try:
+        await dispatcher.enqueue_generation(task.id)
+        repository.mark_dispatch_confirmed(task.id)
+    except Exception as exc:
+        repository.set_status(task.id, "needs_attention", error_code="DISPATCH_FAILED")
+        raise HTTPException(status_code=503, detail="生成任务入队失败，可安全重试") from exc
+    return "queued"
+
+
 @router.post("/images", response_model=GenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
 async def create_image(
     payload: CreateImageRequest,
@@ -65,6 +81,8 @@ async def create_image(
     project, cross_tenant = identity.get_project(principal, payload.project_id)
     if cross_tenant or project is None:
         raise HTTPException(status_code=403 if cross_tenant else 404, detail="无权访问该项目" if cross_tenant else "项目不存在")
+    if not can_create_generation(identity.project_role(principal, payload.project_id)):
+        raise HTTPException(status_code=403, detail="当前项目角色无权创建生成任务")
     try:
         parameters = ImageParameters.model_validate(payload.model_dump(exclude={"project_id"}))
     except ValidationError as exc:
@@ -78,25 +96,18 @@ async def create_image(
         workflow_version="z_image_turbo:v1",
     )
     try:
-        repository.ensure_quota(
-            principal.tenant_id,
+        task, created = repository.create_or_get_task(
+            command,
+            idempotency_key,
             estimated_gpu_seconds=60,
             estimated_storage_bytes=50 * 1024**2,
         )
     except QuotaExceeded as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
-    try:
-        task, created = repository.create_or_get_task(command, idempotency_key)
     except IdempotencyConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if created:
-        repository.set_status(task.id, "queued")
-        try:
-            await dispatcher.enqueue_generation(task.id)
-        except Exception as exc:
-            repository.set_status(task.id, "needs_attention", error_code="DISPATCH_FAILED")
-            raise HTTPException(status_code=503, detail="生成任务入队失败，可安全重试") from exc
-    return GenerationAccepted(task_id=task.id, status="queued" if created else task.status)
+    accepted_status = await _dispatch_if_needed(repository, dispatcher, task, created)
+    return GenerationAccepted(task_id=task.id, status=accepted_status)
 
 
 @router.post("/videos", response_model=GenerationAccepted, status_code=status.HTTP_202_ACCEPTED)
@@ -113,6 +124,8 @@ async def create_video(
     project, cross_tenant = identity.get_project(principal, payload.project_id)
     if cross_tenant or project is None:
         raise HTTPException(status_code=403 if cross_tenant else 404, detail="无权访问该项目" if cross_tenant else "项目不存在")
+    if not can_create_generation(identity.project_role(principal, payload.project_id)):
+        raise HTTPException(status_code=403, detail="当前项目角色无权创建生成任务")
     try:
         policy = VideoParameters(
             prompt=payload.prompt,
@@ -133,22 +146,15 @@ async def create_video(
         workflow_version="z_image_turbo:v1+wan_i2v:v1",
     )
     try:
-        repository.ensure_quota(
-            principal.tenant_id,
+        task, created = repository.create_or_get_task(
+            command,
+            idempotency_key,
             estimated_gpu_seconds=600,
             estimated_storage_bytes=500 * 1024**2,
         )
     except QuotaExceeded as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
-    try:
-        task, created = repository.create_or_get_task(command, idempotency_key)
     except IdempotencyConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if created:
-        repository.set_status(task.id, "queued")
-        try:
-            await dispatcher.enqueue_generation(task.id)
-        except Exception as exc:
-            repository.set_status(task.id, "needs_attention", error_code="DISPATCH_FAILED")
-            raise HTTPException(status_code=503, detail="生成任务入队失败，可安全重试") from exc
-    return GenerationAccepted(task_id=task.id, status="queued" if created else task.status)
+    accepted_status = await _dispatch_if_needed(repository, dispatcher, task, created)
+    return GenerationAccepted(task_id=task.id, status=accepted_status)

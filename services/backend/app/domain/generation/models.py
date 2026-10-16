@@ -35,6 +35,9 @@ class GenerationTask(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancellation_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dispatch_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reserved_gpu_seconds: Mapped[float] = mapped_column(Float, default=0)
+    reserved_storage_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
 
 
 class GenerationStep(Base):
@@ -57,6 +60,7 @@ class GenerationStep(Base):
 
 class UsageLedger(Base):
     __tablename__ = "usage_ledger"
+    __table_args__ = (UniqueConstraint("generation_task_id", name="uq_usage_generation_task"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True)

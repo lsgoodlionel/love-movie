@@ -62,6 +62,11 @@ class Repo:
         self.timeline.append(f"asset:{kind}")
         return asset
 
+    def persist_asset_and_usage(self, task_id, stored, kind, *, usage, parent_asset_id=None):
+        asset = self.persist_asset(task_id, stored, kind, parent_asset_id)
+        self.record_usage(task_id, **usage)
+        return asset
+
     def record_usage(self, task_id, **values):
         self.timeline.append("usage")
 
@@ -70,7 +75,7 @@ class Planner:
     def __init__(self, fail_unload: bool = False) -> None:
         self.fail_unload = fail_unload
 
-    async def plan(self, text):
+    async def plan(self, text, *, tenant_id=None):
         if self.fail_unload:
             raise RemoteServiceError("REMOTE_SOFT_TIMEOUT", "等待显存释放超时")
         return PlannedPrompts(

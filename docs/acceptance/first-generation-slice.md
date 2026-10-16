@@ -14,13 +14,13 @@
 
 | 检查 | 结果 |
 |---|---|
-| `pytest -q` | 68 passed |
+| `pytest -q` | 81 passed |
 | `npm test -- --run` | 5 passed |
 | `npm run typecheck` | passed |
 | `npm run build` | passed，`/login`、`/generate`、`/assets` 已生成 |
 | `npx playwright test` | 3 passed |
 | `docker compose up -d --build` | PostgreSQL、Redis、MinIO、API healthy；Web、Worker running |
-| PostgreSQL migration | `0006_user_email_index`，15 张 public 表；`alembic check` 无漂移 |
+| PostgreSQL migration | `0008_tenant_reliability`；现有库与临时空库均完成 `upgrade head`，`alembic check` 无漂移 |
 | Redis Worker heartbeat | present |
 | 本地 API 用户流 | 登录 200、创建项目成功、项目列表 200 |
 | API → Redis → Worker | 任务已被 Worker 接管；无远程凭据时稳定终态失败 |

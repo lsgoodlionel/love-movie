@@ -7,7 +7,7 @@ class PermissionDenied(Exception):
     pass
 
 
-def can_create_generation(role: Role) -> bool:
+def can_create_generation(role: Role | None) -> bool:
     return role in {Role.OWNER, Role.ADMIN, Role.CREATOR}
 
 

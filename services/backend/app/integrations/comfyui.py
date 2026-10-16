@@ -49,9 +49,9 @@ class ComfyUIAdapter:
                 json={"prompt": workflow, "client_id": client_id},
             )
         except httpx.TimeoutException as exc:
-            raise RemoteServiceError("REMOTE_TIMEOUT", "生成服务响应超时") from exc
+            raise RemoteServiceError("REMOTE_SUBMISSION_UNKNOWN", "远程提交结果未确认，需要人工核对") from exc
         except httpx.HTTPError as exc:
-            raise RemoteServiceError("REMOTE_UNAVAILABLE", "生成服务暂时不可用") from exc
+            raise RemoteServiceError("REMOTE_SUBMISSION_UNKNOWN", "远程提交结果未确认，需要人工核对") from exc
         self._raise_for_response(response)
         try:
             return str(response.json()["prompt_id"])
@@ -72,9 +72,11 @@ class ComfyUIAdapter:
                     f"/history/{prompt_id}", headers=self._access.as_dict()
                 )
             except httpx.HTTPError:
+                yield ProgressEvent("progress", progress=None)
                 await asyncio.sleep(self._poll_interval)
                 continue
             if self._is_tunnel_1033(response) or response.status_code >= 500:
+                yield ProgressEvent("progress", progress=None)
                 await asyncio.sleep(self._poll_interval)
                 continue
             self._raise_for_response(response)
@@ -116,20 +118,56 @@ class ComfyUIAdapter:
         except (ValueError, TypeError) as exc:
             raise RemoteServiceError("REMOTE_INVALID_RESPONSE", "生成队列返回格式不正确") from exc
 
-    async def cancel(self, prompt_id: str) -> None:
+    async def cancel(self, prompt_id: str, *, confirmation_polls: int = 5) -> None:
         try:
-            response = await self._client.post(
-                "/queue",
-                headers=self._access.as_dict(),
-                json={"delete": [prompt_id]},
-            )
-            self._raise_for_response(response)
-            interrupt = await self._client.post("/interrupt", headers=self._access.as_dict())
-            self._raise_for_response(interrupt)
+            queue = await self._queue_payload()
+            running = self._queue_has_prompt(queue.get("queue_running", []), prompt_id)
+            pending = self._queue_has_prompt(queue.get("queue_pending", []), prompt_id)
+            if pending:
+                response = await self._client.post(
+                    "/queue",
+                    headers=self._access.as_dict(),
+                    json={"delete": [prompt_id]},
+                )
+                self._raise_for_response(response)
+            elif running:
+                response = await self._client.post("/interrupt", headers=self._access.as_dict())
+                self._raise_for_response(response)
+            else:
+                history = await self.history(prompt_id)
+                if history and history.kind == "completed":
+                    raise RemoteServiceError("REMOTE_ALREADY_COMPLETED", "远程任务已完成，需要恢复生成结果")
+                return
+            for _ in range(confirmation_polls):
+                queue = await self._queue_payload()
+                if not self._queue_has_prompt(
+                    [*queue.get("queue_running", []), *queue.get("queue_pending", [])], prompt_id
+                ):
+                    history = await self.history(prompt_id)
+                    if history and history.kind == "completed":
+                        raise RemoteServiceError("REMOTE_ALREADY_COMPLETED", "远程任务已完成，需要恢复生成结果")
+                    return
+                await asyncio.sleep(self._poll_interval)
+            raise RemoteServiceError("REMOTE_CANCEL_UNCONFIRMED", "远程任务取消尚未确认")
         except RemoteServiceError:
             raise
         except httpx.HTTPError as exc:
             raise RemoteServiceError("REMOTE_UNAVAILABLE", "远程任务取消失败") from exc
+
+    async def _queue_payload(self) -> dict[str, Any]:
+        response = await self._client.get("/queue", headers=self._access.as_dict())
+        self._raise_for_response(response)
+        try:
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise TypeError
+            return payload
+        except (ValueError, TypeError) as exc:
+            raise RemoteServiceError("REMOTE_INVALID_RESPONSE", "生成队列返回格式不正确") from exc
+
+    @staticmethod
+    def _queue_has_prompt(entries: list[Any], prompt_id: str) -> bool:
+        return any(prompt_id in entry for entry in entries if isinstance(entry, list))
 
     async def download_output(self, output: dict[str, str]) -> AsyncIterator[bytes]:
         params = {key: output[key] for key in ("filename", "subfolder", "type") if output.get(key)}

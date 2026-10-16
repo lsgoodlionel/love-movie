@@ -13,7 +13,7 @@
 - MinIO 平台素材归档、SHA-256、300 秒预签名预览
 - Web SSE 进度、刷新后历史任务恢复、图片预览和 HTML5 视频播放
 - owner/admin/creator/reviewer 四种角色、租户隔离与项目成员隔离
-- 可配置模型路由、租户 GPU/存储配额字段、用量流水和管理诊断
+- 租户隔离的可配置模型路由、原子 GPU/存储配额预留、用量流水和管理诊断
 
 远程 Ollama 和 ComfyUI 只由 API/Worker 访问。浏览器构建不包含远程 AI 主机名或 Cloudflare Access Header。
 

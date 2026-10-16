@@ -20,8 +20,10 @@ class PlanningService:
         self._model_router = model_router
         self._ollama = ollama
 
-    async def plan(self, source_text: str) -> PlannedPrompts:
-        selection = self._model_router.select("story_planning", "interactive")
+    async def plan(self, source_text: str, *, tenant_id: Any | None = None) -> PlannedPrompts:
+        selection = self._model_router.select(
+            "story_planning", "interactive", str(tenant_id) if tenant_id else None
+        )
         raw = await self._ollama.plan_video_text(source_text, model=selection.model)
         if not isinstance(raw, dict):
             raw = {

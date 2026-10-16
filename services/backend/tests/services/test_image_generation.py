@@ -2,9 +2,12 @@ import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
+import pytest
+
 from app.integrations.comfyui import ProgressEvent
 from app.integrations.storage import StoredObject
 from app.services.image_generation import ImageGenerationService
+from app.services.exceptions import GenerationCancelled
 
 
 class Repo:
@@ -35,6 +38,11 @@ class Repo:
     def persist_asset(self, task_id, stored, kind):
         self.timeline.append("asset_persisted")
         return SimpleNamespace(id="asset-1", object_key=stored.key)
+
+    def persist_asset_and_usage(self, task_id, stored, kind, *, usage, parent_asset_id=None):
+        asset = self.persist_asset(task_id, stored, kind)
+        self.record_usage(task_id, **usage)
+        return asset
 
     def record_usage(self, task_id, **values):
         self.timeline.append("usage_persisted")
@@ -91,3 +99,33 @@ def test_image_service_persists_prompt_before_tracking_and_stores_asset() -> Non
         "usage_persisted",
         "completed",
     ]
+
+
+def test_progress_heartbeat_observes_cancellation_and_cancels_remote() -> None:
+    class CancellingRepo(Repo):
+        def __init__(self):
+            super().__init__()
+            self.checks = 0
+
+        def is_cancellation_requested(self, task_id):
+            self.checks += 1
+            return self.checks >= 2
+
+    class HeartbeatComfy(Comfy):
+        def __init__(self, repo):
+            super().__init__(repo)
+            self.cancelled = []
+
+        async def track(self, prompt_id):
+            yield ProgressEvent("progress", None)
+
+        async def cancel(self, prompt_id):
+            self.cancelled.append(prompt_id)
+
+    repo = CancellingRepo()
+    comfy = HeartbeatComfy(repo)
+
+    with pytest.raises(GenerationCancelled):
+        asyncio.run(ImageGenerationService(repo, comfy, Storage(), Lease()).run("task-1"))
+
+    assert comfy.cancelled == ["prompt-1"]

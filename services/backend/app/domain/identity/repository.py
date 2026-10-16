@@ -142,3 +142,30 @@ class IdentityRepository:
                 if membership is None:
                     return None, True
             return project, False
+
+    def project_role(self, principal: Principal, project_id: UUID) -> Role | None:
+        if principal.role in {Role.OWNER, Role.ADMIN}:
+            return principal.role
+        with self._sessions() as db:
+            role = db.scalar(
+                select(ProjectMember.role)
+                .join(Project, Project.id == ProjectMember.project_id)
+                .where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == principal.user_id,
+                    Project.tenant_id == principal.tenant_id,
+                )
+            )
+            return Role(role) if role else None
+
+    def set_project_member_role(self, project_id: UUID, user_id: UUID, role: str) -> None:
+        with self._sessions.begin() as db:
+            membership = db.scalar(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == user_id,
+                )
+            )
+            if membership is None:
+                raise LookupError("项目成员不存在")
+            membership.role = Role(role).value

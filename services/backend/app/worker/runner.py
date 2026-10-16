@@ -40,5 +40,8 @@ class GenerationRunner:
             self._repository.set_status(normalized_id, "cancelled")
         except Exception as exc:
             code = getattr(exc, "code", "GENERATION_FAILED")
-            self._repository.set_status(normalized_id, "failed", error_code=code)
+            if code == "REMOTE_SUBMISSION_UNKNOWN" or task.cancellation_requested_at is not None:
+                self._repository.set_status(normalized_id, "needs_attention", error_code=code)
+            else:
+                self._repository.set_status(normalized_id, "failed", error_code=code)
             raise

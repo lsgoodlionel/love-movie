@@ -1,15 +1,18 @@
 import asyncio
 
 import pytest
+import httpx
 
 from app.services.planning import PlannedPrompts, PlanningService
+from app.integrations.access_headers import AccessHeaders
+from app.integrations.ollama import OllamaAdapter
 
 
 class Router:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    def select(self, capability: str, quality: str):
+    def select(self, capability: str, quality: str, tenant_id: str | None = None):
         self.calls.append((capability, quality))
         return type("Selection", (), {"model": "qwen3.5:latest"})()
 
@@ -48,4 +51,22 @@ def test_planning_rejects_missing_or_oversized_fields() -> None:
         PlannedPrompts(title="", image_prompt="图", motion_prompt="动", negative_prompt="")
     with pytest.raises(ValueError):
         PlannedPrompts(title="标题", image_prompt="图" * 4001, motion_prompt="动", negative_prompt="")
+
+
+def test_adapter_response_without_title_satisfies_planning_contract() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/ps":
+            return httpx.Response(200, json={"models": []})
+        return httpx.Response(
+            200,
+            json={"response": '{"image_prompt":"晨雾山谷","video_prompt":"缓慢推进"}'},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://ollama.test")
+    adapter = OllamaAdapter("https://ollama.test", AccessHeaders.empty(), client=client)
+    plan = asyncio.run(PlanningService(Router(), adapter).plan("山谷中的清晨"))
+    asyncio.run(client.aclose())
+
+    assert plan.title == "山谷中的清晨"
+    assert plan.motion_prompt == "缓慢推进"
 

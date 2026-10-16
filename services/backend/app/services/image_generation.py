@@ -65,13 +65,16 @@ class ImageGenerationService:
                 self._guarded_download(task_id, prompt_id, guard, output),
                 content_type,
             )
-            asset = self._repository.persist_asset(task_id, stored, "image")
-            self._repository.record_usage(
+            asset = self._repository.persist_asset_and_usage(
                 task_id,
-                gpu_seconds=max(time.monotonic() - gpu_started, 0.001),
-                storage_bytes=stored.size_bytes,
-                content_safety_decision="allowed",
-                adult_content_declared=parameters.adult_content_declared,
+                stored,
+                "image",
+                usage={
+                    "gpu_seconds": max(time.monotonic() - gpu_started, 0.001),
+                    "storage_bytes": stored.size_bytes,
+                    "content_safety_decision": "allowed",
+                    "adult_content_declared": parameters.adult_content_declared,
+                },
             )
             self._repository.set_status(task_id, "completed")
             return asset
@@ -79,10 +82,7 @@ class ImageGenerationService:
     async def _ensure_active(self, task_id: Any, prompt_id: str | None = None) -> None:
         if self._repository.is_cancellation_requested(task_id):
             if prompt_id:
-                try:
-                    await self._comfyui.cancel(prompt_id)
-                except Exception:
-                    self._repository.append_event(task_id, "cancel_remote_failed", "远程任务取消未确认，已停止本地处理")
+                await self._comfyui.cancel(prompt_id)
             raise GenerationCancelled()
 
     async def _guarded_download(self, task_id: Any, prompt_id: str, guard: Any, output: dict[str, str]):

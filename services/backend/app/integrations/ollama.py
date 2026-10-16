@@ -40,7 +40,7 @@ class OllamaAdapter:
     async def plan_video_text(self, request: str, *, model: str) -> PlannedPrompts:
         prompt = (
             "将下列中文创意整理成图片首帧提示词和图生视频动态提示词。"
-            "只返回 JSON，字段为 image_prompt 和 video_prompt：\n" + request
+            "只返回 JSON，字段为 title、image_prompt、video_prompt 和 negative_prompt：\n" + request
         )
         try:
             response = await self._client.post(
@@ -66,7 +66,7 @@ class OllamaAdapter:
                 image_prompt=str(planned["image_prompt"]),
                 motion_prompt=str(motion_prompt),
                 negative_prompt=str(planned.get("negative_prompt", "")),
-                title=str(planned.get("title", "")),
+                title=str(planned.get("title") or request[:80] or "未命名镜头"),
             )
         except (ValueError, KeyError, TypeError) as exc:
             raise RemoteServiceError("REMOTE_INVALID_RESPONSE", "远程文本模型返回格式不正确") from exc

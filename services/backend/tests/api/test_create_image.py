@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from uuid import UUID
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
@@ -12,6 +13,14 @@ class Dispatcher:
 
     async def enqueue_generation(self, task_id) -> str:
         self.task_ids.append(str(task_id))
+        return str(task_id)
+
+
+class FailOnceDispatcher(Dispatcher):
+    async def enqueue_generation(self, task_id) -> str:
+        self.task_ids.append(str(task_id))
+        if len(self.task_ids) == 1:
+            raise RuntimeError("queue unavailable")
         return str(task_id)
 
 
@@ -37,6 +46,32 @@ def make_client(role: str = "creator"):
     else:
         project_id = client.post("/api/v1/projects", json={"name": "宣传片"}).json()["id"]
     return client, project_id, dispatcher
+
+
+def test_dispatch_failure_can_be_retried_with_same_idempotency_key() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    dispatcher = FailOnceDispatcher()
+    app = create_app(Settings(app_env="test"), engine=engine, dispatcher=dispatcher)
+    app.state.identity_repository.create_tenant_with_user(
+        tenant_name="重试团队",
+        email="retry@example.com",
+        password="safe-password-123",
+        role="creator",
+    )
+    client = TestClient(app, base_url="https://testserver")
+    client.post("/api/v1/auth/login", json={"email": "retry@example.com", "password": "safe-password-123"})
+    project_id = client.post("/api/v1/projects", json={"name": "重试项目"}).json()["id"]
+    payload = {"project_id": project_id, "prompt": "雨夜"}
+    headers = {"Idempotency-Key": "retry-dispatch-1"}
+
+    assert client.post("/api/v1/generations/images", json=payload, headers=headers).status_code == 503
+    retried = client.post("/api/v1/generations/images", json=payload, headers=headers)
+
+    assert retried.status_code == 202
+    assert retried.json()["status"] == "queued"
+    assert len(dispatcher.task_ids) == 2
 
 
 def test_create_image_is_idempotent_and_enqueued_once() -> None:
@@ -85,6 +120,22 @@ def test_video_applies_minor_content_policy_before_enqueue() -> None:
     )
 
     assert response.status_code == 422
+    assert not dispatcher.task_ids
+
+
+def test_tenant_creator_with_project_reviewer_role_cannot_generate() -> None:
+    client, project_id, dispatcher = make_client("creator")
+    app = client.app
+    principal = app.state.identity_repository.authenticate("user@example.com", "safe-password-123")
+    app.state.identity_repository.set_project_member_role(UUID(project_id), principal.user_id, "reviewer")
+
+    response = client.post(
+        "/api/v1/generations/images",
+        json={"project_id": project_id, "prompt": "雨夜"},
+        headers={"Idempotency-Key": "project-reviewer-1"},
+    )
+
+    assert response.status_code == 403
     assert not dispatcher.task_ids
 
 

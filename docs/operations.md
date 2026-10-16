@@ -9,6 +9,8 @@
 
 管理诊断只返回组件状态、队列长度和当前租约任务 ID，不返回 URL、Access Header、凭据或远程响应正文。
 
+模型路由按租户隔离；数据库中 `tenant_id` 为空的记录是平台只读默认值，租户管理员只能新增或修改本租户覆盖项。Worker 在启动时载入启用路由，修改后需滚动重启 Worker 才会生效。
+
 ## 生成任务恢复
 
 1. PostgreSQL 是任务、步骤和素材的权威状态。
@@ -22,6 +24,8 @@
 
 - `REMOTE_AUTH_FAILED`：检查 Service Token 是否存在和权限是否正确，不记录其值。
 - `REMOTE_TIMEOUT` / `REMOTE_SOFT_TIMEOUT`：先查远程 history/queue，避免重复提交。
+- `REMOTE_SUBMISSION_UNKNOWN`：`POST /prompt` 结果不确定，任务进入人工处理，不得自动再次提交。
+- `REMOTE_CANCEL_UNCONFIRMED`：保持人工处理状态，先确认 queue/history，避免把仍在运行的任务误报为已取消。
 - `REMOTE_OUT_OF_MEMORY`：确认 Ollama 已按 `keep_alive: "0s"` 卸载，再检查 GPU 占用。
 - `WORKFLOW_VALIDATION_FAILED`：核对工作流版本和允许参数。
 - `DOWNLOAD_INTERRUPTED`：可从已有 history 输出重新下载，不重新生成。

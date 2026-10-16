@@ -18,7 +18,7 @@ class RecoveryCoordinator:
     async def recover_incomplete_tasks(self) -> RecoveryReport:
         requeued = resumed = needs_attention = 0
         for task in self._repository.incomplete_tasks():
-            if task.status == "queued":
+            if task.status in {"draft", "queued"}:
                 await self._dispatcher.enqueue_generation(task.id)
                 requeued += 1
             elif task.remote_prompt_id:

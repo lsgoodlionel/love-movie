@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from app.worker.runner import GenerationRunner
+from app.integrations.errors import RemoteServiceError
 
 
 class Repo:
@@ -24,6 +25,11 @@ class Service:
 
     async def run(self, task_id):
         self.calls.append(task_id)
+
+
+class FailingService(Service):
+    async def run(self, task_id):
+        raise RemoteServiceError("REMOTE_SUBMISSION_UNKNOWN", "未确认")
 
 
 def test_running_remote_task_cancellation_is_delegated_to_service() -> None:
@@ -62,3 +68,23 @@ def test_queued_cancellation_finishes_without_remote_service() -> None:
 
     assert image.calls == []
     assert repo.statuses == ["cancelled"]
+
+
+def test_uncertain_remote_submission_needs_attention() -> None:
+    task_id = uuid4()
+    repo = Repo(
+        SimpleNamespace(
+            id=task_id,
+            kind="image",
+            status="running",
+            cancellation_requested_at=None,
+            remote_prompt_id=None,
+        )
+    )
+
+    try:
+        asyncio.run(GenerationRunner(repo, FailingService(), Service()).run(str(task_id)))
+    except RemoteServiceError:
+        pass
+
+    assert repo.statuses == ["needs_attention"]

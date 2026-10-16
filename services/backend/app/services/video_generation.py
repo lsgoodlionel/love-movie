@@ -44,7 +44,7 @@ class VideoGenerationService:
                 plan = PlannedPrompts.model_validate(plan_data)
             else:
                 self._repository.set_status(task_id, "planning")
-                plan = await self._planning.plan(task.parameters["prompt"])
+                plan = await self._planning.plan(task.parameters["prompt"], tenant_id=task.tenant_id)
                 self._repository.persist_plan(task_id, plan)
 
             video = self._repository.find_asset(task_id, "video")
@@ -78,7 +78,21 @@ class VideoGenerationService:
                 stored_image = await self._storage.put_stream(
                     image_key, _one_chunk(image_bytes), "image/png"
                 )
-                first_frame = self._repository.persist_asset(task_id, stored_image, "image")
+                first_frame = self._repository.persist_asset_and_usage(
+                    task_id,
+                    stored_image,
+                    "image",
+                    usage={
+                        "requested_model": plan.requested_model,
+                        "actual_model": plan.actual_model,
+                        "fallback_reason": plan.fallback_reason,
+                        "gpu_seconds": max(time.monotonic() - gpu_started, 0.001),
+                        "storage_bytes": stored_image.size_bytes,
+                        "content_safety_decision": "allowed",
+                        "adult_content_declared": task.parameters.get("adult_content_declared", False),
+                    },
+                )
+                gpu_started = time.monotonic()
             else:
                 image_bytes = self._storage.get_bytes(first_frame.object_key)
                 image_filename = PurePosixPath(first_frame.object_key).name.removeprefix("first-frame-")
@@ -115,21 +129,20 @@ class VideoGenerationService:
                 self._guarded_download(task_id, video_prompt_id, guard, video_output),
                 self._video_content_type(video_filename),
             )
-            video = self._repository.persist_asset(
+            video = self._repository.persist_asset_and_usage(
                 task_id,
                 stored_video,
                 "video",
+                usage={
+                    "requested_model": plan.requested_model,
+                    "actual_model": plan.actual_model,
+                    "fallback_reason": plan.fallback_reason,
+                    "gpu_seconds": max(time.monotonic() - gpu_started, 0.001),
+                    "storage_bytes": stored_video.size_bytes,
+                    "content_safety_decision": "allowed",
+                    "adult_content_declared": task.parameters.get("adult_content_declared", False),
+                },
                 parent_asset_id=first_frame.id,
-            )
-            self._repository.record_usage(
-                task_id,
-                requested_model=plan.requested_model,
-                actual_model=plan.actual_model,
-                fallback_reason=plan.fallback_reason,
-                gpu_seconds=max(time.monotonic() - gpu_started, 0.001),
-                storage_bytes=first_frame.size_bytes + stored_video.size_bytes,
-                content_safety_decision="allowed",
-                adult_content_declared=task.parameters.get("adult_content_declared", False),
             )
             self._repository.set_status(task_id, "completed")
             return video
@@ -152,10 +165,7 @@ class VideoGenerationService:
     async def _ensure_active(self, task_id: Any, prompt_id: str | None = None) -> None:
         if self._repository.is_cancellation_requested(task_id):
             if prompt_id:
-                try:
-                    await self._comfyui.cancel(prompt_id)
-                except Exception:
-                    self._repository.append_event(task_id, "cancel_remote_failed", "远程任务取消未确认，已停止本地处理")
+                await self._comfyui.cancel(prompt_id)
             raise GenerationCancelled()
 
     async def _guarded_download(self, task_id: Any, prompt_id: str, guard: Any, output: dict[str, str]):

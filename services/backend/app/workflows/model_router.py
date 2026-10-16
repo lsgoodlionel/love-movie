@@ -9,7 +9,7 @@ class ModelSelection:
 
 
 class ModelRouter:
-    def __init__(self, routes: dict[tuple[str, str], str]) -> None:
+    def __init__(self, routes: dict[tuple[str, ...], str]) -> None:
         self._routes = routes
 
     @classmethod
@@ -25,11 +25,13 @@ class ModelRouter:
             }
         )
 
-    def select(self, capability: str, quality: str) -> ModelSelection:
+    def select(self, capability: str, quality: str, tenant_id: str | None = None) -> ModelSelection:
         if capability in {"longform_planning", "final_review"} and quality == "interactive":
             raise ValueError("大模型不能用于同步交互")
         try:
-            model = self._routes[(capability, quality)]
+            model = (
+                self._routes.get((tenant_id, capability, quality)) if tenant_id else None
+            ) or self._routes[(capability, quality)]
         except KeyError as exc:
             raise ValueError("没有可用的模型路由") from exc
         return ModelSelection(model=model, capability=capability, quality=quality)

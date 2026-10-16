@@ -85,3 +85,87 @@ def test_submit_normalizes_remote_failures(response: httpx.Response, code: str) 
     assert caught.value.code == code
     assert "html" not in str(caught.value).lower()
 
+
+def test_cancel_pending_deletes_only_target_without_global_interrupt() -> None:
+    calls: list[tuple[str, str]] = []
+    queue_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal queue_calls
+        calls.append((request.method, request.url.path))
+        if request.url.path == "/queue" and request.method == "GET":
+            queue_calls += 1
+            pending = [[2, "prompt-pending", {}]] if queue_calls == 1 else []
+            return httpx.Response(200, json={"queue_running": [[1, "other-running", {}]], "queue_pending": pending})
+        if request.url.path == "/queue" and request.method == "POST":
+            return httpx.Response(200, json={})
+        if request.url.path.startswith("/history/"):
+            return httpx.Response(200, json={})
+        raise AssertionError(request.url.path)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://comfy.test")
+    adapter = ComfyUIAdapter("https://comfy.test", AccessHeaders.empty(), client=client, poll_interval=0)
+    asyncio.run(adapter.cancel("prompt-pending"))
+    asyncio.run(client.aclose())
+
+    assert ("POST", "/queue") in calls
+    assert ("POST", "/interrupt") not in calls
+
+
+def test_track_yields_heartbeat_during_tunnel_1033() -> None:
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(530, text="Cloudflare 1033")),
+        base_url="https://comfy.test",
+    )
+    adapter = ComfyUIAdapter(
+        "https://comfy.test", AccessHeaders.empty(), client=client, poll_interval=0, max_history_polls=1
+    )
+
+    async def first_event():
+        stream = adapter.track("prompt-1")
+        event = await anext(stream)
+        await stream.aclose()
+        return event
+
+    assert asyncio.run(first_event()).kind == "progress"
+    asyncio.run(client.aclose())
+
+
+def test_cancel_running_interrupts_only_after_queue_identification() -> None:
+    calls: list[tuple[str, str]] = []
+    queue_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal queue_calls
+        calls.append((request.method, request.url.path))
+        if request.url.path == "/queue":
+            queue_calls += 1
+            running = [[1, "prompt-running", {}]] if queue_calls == 1 else []
+            return httpx.Response(200, json={"queue_running": running, "queue_pending": []})
+        if request.url.path == "/interrupt":
+            return httpx.Response(200, json={})
+        if request.url.path.startswith("/history/"):
+            return httpx.Response(200, json={})
+        raise AssertionError(request.url.path)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://comfy.test")
+    adapter = ComfyUIAdapter("https://comfy.test", AccessHeaders.empty(), client=client, poll_interval=0)
+    asyncio.run(adapter.cancel("prompt-running"))
+    asyncio.run(client.aclose())
+
+    assert ("POST", "/interrupt") in calls
+    assert ("POST", "/queue") not in calls
+
+
+def test_submit_timeout_is_uncertain_not_safe_retry() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timeout", request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://comfy.test")
+    adapter = ComfyUIAdapter("https://comfy.test", AccessHeaders.empty(), client=client)
+    with pytest.raises(RemoteServiceError) as caught:
+        asyncio.run(adapter.submit({}, "client"))
+    asyncio.run(client.aclose())
+
+    assert caught.value.code == "REMOTE_SUBMISSION_UNKNOWN"
+

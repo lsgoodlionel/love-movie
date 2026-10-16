@@ -28,6 +28,7 @@ export default function GeneratePage() {
       void listTasks().then((tasks) => {
         setRecent(tasks.map((task) => ({
           id: task.id,
+          projectId: task.project_id,
           kind: task.kind,
           status: task.status,
           prompt: task.kind === "image" ? "历史图片任务" : "历史视频任务",
@@ -73,7 +74,7 @@ export default function GeneratePage() {
             setProjectId(selectedProject);
             setPreview(null);
             window.localStorage.setItem("love-movie:last-task", id);
-            setRecent((items) => [{ id, kind, status: "queued", prompt: kind === "image" ? "新图片任务" : "新视频任务" }, ...items]);
+            setRecent((items) => [{ id, projectId: selectedProject, kind, status: "queued", prompt: kind === "image" ? "新图片任务" : "新视频任务" }, ...items]);
           }} />
         </div>
         <div className="panel preview-panel">
@@ -84,7 +85,11 @@ export default function GeneratePage() {
           {projectId && <small className="trace-id">项目追踪：{projectId.slice(0, 8)}</small>}
         </div>
       </section>
-      <RecentTasks tasks={recent} onSelect={setTaskId} />
+      <RecentTasks tasks={recent} onSelect={(task) => {
+        setTaskId(task.id);
+        setProjectId(task.projectId);
+        window.localStorage.setItem("love-movie:last-task", task.id);
+      }} />
     </main>
   );
 }

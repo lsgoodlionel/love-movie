@@ -43,9 +43,18 @@ async def startup_worker(ctx: dict) -> None:
     )
     lease = GpuLease(RedisLeaseBackend(ctx["redis"]))
     configured_routes = AIResourceRepository(engine).enabled_model_routes()
-    router = ModelRouter(
-        {(route.capability, route.quality): route.model for route in configured_routes}
-    ) if configured_routes else ModelRouter.defaults()
+    if configured_routes:
+        route_map = {}
+        for route in configured_routes:
+            key = (
+                (str(route.tenant_id), route.capability, route.quality)
+                if route.tenant_id
+                else (route.capability, route.quality)
+            )
+            route_map[key] = route.model
+        router = ModelRouter(route_map)
+    else:
+        router = ModelRouter.defaults()
     planning = PlanningService(router, ollama)
     image_service = ImageGenerationService(repository, comfyui, storage, lease)
     video_service = VideoGenerationService(repository, planning, comfyui, storage, lease)

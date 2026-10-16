@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.identity.models import Base
@@ -30,9 +30,12 @@ class WorkflowDefinition(Base):
 
 class ModelRoute(Base):
     __tablename__ = "model_routes"
-    __table_args__ = (UniqueConstraint("capability", "quality"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "capability", "quality"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     capability: Mapped[str] = mapped_column(String(80))
     quality: Mapped[str] = mapped_column(String(40))
     model: Mapped[str] = mapped_column(String(120))

@@ -39,7 +39,7 @@ def list_model_routes(
     repository: Annotated[AIResourceRepository, Depends(get_repository)],
 ) -> list[ModelRouteResponse]:
     require_admin(principal)
-    return [ModelRouteResponse.model_validate(item) for item in repository.list_model_routes()]
+    return [ModelRouteResponse.model_validate(item) for item in repository.list_model_routes(principal.tenant_id)]
 
 
 @router.post("/model-routes", response_model=ModelRouteResponse, status_code=status.HTTP_201_CREATED)
@@ -49,7 +49,7 @@ def create_model_route(
     repository: Annotated[AIResourceRepository, Depends(get_repository)],
 ) -> ModelRouteResponse:
     require_admin(principal)
-    return ModelRouteResponse.model_validate(repository.create_model_route(payload.model_dump()))
+    return ModelRouteResponse.model_validate(repository.create_model_route(principal.tenant_id, payload.model_dump()))
 
 
 @router.patch("/model-routes/{route_id}", response_model=ModelRouteResponse)
@@ -60,7 +60,7 @@ def update_model_route(
     repository: Annotated[AIResourceRepository, Depends(get_repository)],
 ) -> ModelRouteResponse:
     require_admin(principal)
-    route = repository.update_model_route(route_id, payload.model_dump(exclude_none=True))
+    route = repository.update_model_route(principal.tenant_id, route_id, payload.model_dump(exclude_none=True))
     if route is None:
         raise HTTPException(status_code=404, detail="模型路由不存在")
     return ModelRouteResponse.model_validate(route)
