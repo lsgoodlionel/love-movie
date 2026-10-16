@@ -14,7 +14,7 @@
 
 | 检查 | 结果 |
 |---|---|
-| `pytest -q` | 66 passed |
+| `pytest -q` | 68 passed |
 | `npm test -- --run` | 5 passed |
 | `npm run typecheck` | passed |
 | `npm run build` | passed，`/login`、`/generate`、`/assets` 已生成 |
