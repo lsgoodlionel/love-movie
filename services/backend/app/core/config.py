@@ -1,6 +1,8 @@
 from functools import lru_cache
 
-from pydantic import SecretStr
+from typing import Literal
+
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +27,13 @@ class Settings(BaseSettings):
     comfyui_base_url: str = "https://comfyui.lsgood.cn"
     cf_access_client_id: SecretStr = SecretStr("")
     cf_access_client_secret: SecretStr = SecretStr("")
+    generation_adapter_mode: Literal["real", "fake"] = "real"
+
+    @model_validator(mode="after")
+    def forbid_fake_adapters_outside_tests(self) -> "Settings":
+        if self.generation_adapter_mode == "fake" and self.app_env != "test":
+            raise ValueError("fake 生成适配器仅允许在 APP_ENV=test 使用")
+        return self
 
 
 @lru_cache

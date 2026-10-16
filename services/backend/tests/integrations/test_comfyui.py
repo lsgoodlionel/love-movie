@@ -69,6 +69,7 @@ def test_history_is_authoritative_after_websocket_failure() -> None:
 @pytest.mark.parametrize(
     ("response", "code"),
     [
+        (httpx.Response(302, headers={"location": "https://access.example/login"}), "REMOTE_AUTH_FAILED"),
         (httpx.Response(400, json={"error": {"type": "prompt_outputs_failed_validation", "message": "bad"}}), "WORKFLOW_VALIDATION_FAILED"),
         (httpx.Response(500, text="CUDA out of memory"), "REMOTE_OUT_OF_MEMORY"),
         (httpx.Response(524, text="<html>timeout secret</html>"), "REMOTE_TIMEOUT"),

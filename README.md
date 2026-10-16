@@ -1,34 +1,81 @@
-# love-movie
 # 爱视频（Love Movie）
 
-面向个人与内部团队的 AI 图片、视频和长篇动画生产平台。首个里程碑是在中文 Web 页面输入文字，真实调用远程 Ollama 与 ComfyUI，生成可追踪、可预览、可下载的图片和单镜头视频。
+面向个人与内部团队的私有 AI 影像制作平台，并为后续开放注册、套餐与按生成量计费的多租户 SaaS 预留架构。当前首个可运行切片支持在中文 Web 页面输入文字，生成图片或 512×512 单镜头视频，并管理任务、进度和素材。
 
-## 当前状态
+## 已交付能力
 
-项目处于首个真实生成切片的实施阶段。系统设计和任务计划位于：
+- 中文登录、项目、快速生成台与素材库
+- 文字生成图片：768×1024、受控参数、幂等提交
+- 文字生成视频：Ollama 规划提示词 → 图片首帧 → Wan 图生视频
+- 当前视频安全档位：512×512、81 帧、16 FPS、20 步
+- PostgreSQL 任务与事件、Redis ARQ 队列、单 GPU 可续租租约
+- MinIO 平台素材归档、SHA-256、300 秒预签名预览
+- Web SSE 进度恢复、图片预览和 HTML5 视频播放
+- owner/admin/creator/reviewer 四种角色与租户隔离
+- 管理诊断与可运营的模型路由元数据
 
-- `docs/superpowers/specs/2026-10-16-ai-video-studio-design.md`
-- `docs/superpowers/plans/2026-10-16-first-generation-slice.md`
+远程 Ollama 和 ComfyUI 只由 API/Worker 访问。浏览器构建不包含远程 AI 主机名或 Cloudflare Access Header。
 
-## 技术架构
+## 架构
 
-- Web：Next.js + TypeScript
-- API/Worker：FastAPI + Python 3.12
-- 数据：PostgreSQL、Redis、MinIO
-- 媒体处理：FFmpeg
-- 推理：受 Cloudflare Access 保护的远程 Ollama 与 ComfyUI
+```text
+浏览器 ──same-origin /api──> Next.js ──> FastAPI
+                                      ├─ PostgreSQL（权威任务状态）
+                                      ├─ Redis / ARQ（队列与 GPU 租约）
+                                      ├─ MinIO（平台素材）
+                                      └─ Worker ──> Ollama / ComfyUI
+```
 
-## 安全要求
-
-浏览器不会直接访问远程 GPU 服务。Cloudflare Access 凭据只能通过服务端 Secret 或环境变量注入，禁止提交 `.env`、凭据、原始私密提示词或生成媒体。
+- Web：Next.js 16 + React 19 + TypeScript
+- API / Worker：FastAPI + SQLAlchemy + Alembic + ARQ
+- 基础设施：PostgreSQL 16、Redis 7、MinIO、Docker Compose
+- 测试：Pytest、Vitest、Playwright
 
 ## 本地启动
 
-实现中的开发入口：
+1. 创建本地配置，只填写真实环境需要的值，不要提交 `.env`：
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. 启动并等待核心服务健康：
+
+   ```bash
+   docker compose up -d --build
+   docker compose ps
+   ```
+
+3. 首次创建内部所有者：
+
+   ```bash
+   docker compose exec \
+     -e BOOTSTRAP_OWNER_EMAIL='owner@example.com' \
+     -e BOOTSTRAP_OWNER_PASSWORD='请使用强密码' \
+     api python -m app.cli.bootstrap_owner
+   ```
+
+4. 打开 `http://localhost:3000/login`，登录后创建“第一个项目”，即可提交图片或视频任务。
+
+## 开发验证
 
 ```bash
-cp .env.example .env
-docker compose up -d --build
+cd services/backend
+uv sync
+uv run alembic upgrade head
+uv run pytest -q
+
+cd ../../apps/web
+npm install
+npm test -- --run
+npm run typecheck
+npm run build
+
+cd ../../e2e
+npm install
+npx playwright test
 ```
 
-`.env.example` 只列出配置名称与安全示例；真实 Secret 必须由部署环境提供。
+部署与 Secret 注入见 [docs/deployment.md](docs/deployment.md)，日常排障与恢复见 [docs/operations.md](docs/operations.md)，首个切片验收记录见 [docs/acceptance/first-generation-slice.md](docs/acceptance/first-generation-slice.md)。
+
+后续阶段将接续实现短故事配音字幕视频，以及小说/长文本拆解为分集、场景、镜头并批量生成可继续剪辑的素材。

@@ -14,6 +14,20 @@ from app.domain.assets.models import Asset
 from app.integrations.storage import StoredObject
 
 
+_STATUS_EVENTS = {
+    "queued": ("已进入生成队列", 5),
+    "planning": ("正在理解创意并规划镜头", 12),
+    "remote_submitted": ("任务已提交到生成服务", 20),
+    "running": ("正在生成素材", 45),
+    "downloading": ("正在保存生成结果", 85),
+    "completed": ("生成完成", 100),
+    "cancelling": ("正在取消任务", None),
+    "cancelled": ("任务已取消", None),
+    "failed": ("生成未完成", None),
+    "needs_attention": ("任务需要人工处理", None),
+}
+
+
 class GenerationRepository:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
@@ -68,6 +82,15 @@ class GenerationRepository:
                 if name not in allowed:
                     raise ValueError(f"不允许更新字段：{name}")
                 setattr(task, name, value)
+            message, progress = _STATUS_EVENTS.get(status, ("任务状态已更新", None))
+            db.add(
+                GenerationEvent(
+                    generation_task_id=task.id,
+                    kind=status,
+                    message=message,
+                    progress=progress,
+                )
+            )
 
     def persist_asset(
         self,
@@ -160,6 +183,8 @@ class GenerationRepository:
                 task.status = "cancelled"
             elif task.status not in {"completed", "cancelled", "failed"}:
                 task.status = "cancelling"
+            message, progress = _STATUS_EVENTS[task.status]
+            db.add(GenerationEvent(generation_task_id=task.id, kind=task.status, message=message, progress=progress))
             return task.status, False
 
     def append_event(self, task_id: Any, kind: str, message: str, progress: int | None = None) -> GenerationEvent:

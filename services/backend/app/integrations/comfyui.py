@@ -126,7 +126,7 @@ class ComfyUIAdapter:
     @staticmethod
     def _raise_for_response(response: httpx.Response) -> None:
         text = response.text.lower()
-        if response.status_code in {401, 403}:
+        if response.status_code in {401, 403} or 300 <= response.status_code < 400:
             raise RemoteServiceError("REMOTE_AUTH_FAILED", "远程服务认证失败")
         if response.status_code in {408, 504, 524}:
             raise RemoteServiceError("REMOTE_TIMEOUT", "远程服务响应超时")

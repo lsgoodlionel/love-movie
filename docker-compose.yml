@@ -33,7 +33,7 @@ services:
       MINIO_ROOT_USER: ${OBJECT_STORAGE_ACCESS_KEY:-love-movie-local}
       MINIO_ROOT_PASSWORD: ${OBJECT_STORAGE_SECRET_KEY:-local-development-only}
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -63,13 +63,16 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://love_movie:love_movie@postgres:5432/love_movie}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    command: ["/bin/sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')"]
       interval: 10s
@@ -85,12 +88,16 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://love_movie:love_movie@postgres:5432/love_movie}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      minio-init:
+        condition: service_completed_successfully
+      api:
         condition: service_healthy
 
   web:

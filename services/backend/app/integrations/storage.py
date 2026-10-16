@@ -18,8 +18,9 @@ class StoredObject:
 class StorageAdapter:
     ALLOWED_TYPES = {"image/png", "image/jpeg", "image/webp", "video/mp4", "video/webm"}
 
-    def __init__(self, client: Any, bucket: str, *, max_bytes: int = 2 * 1024**3) -> None:
+    def __init__(self, client: Any, bucket: str, *, presign_client: Any | None = None, max_bytes: int = 2 * 1024**3) -> None:
         self._client = client
+        self._presign_client = presign_client or client
         self._bucket = bucket
         self._max_bytes = max_bytes
 
@@ -61,7 +62,7 @@ class StorageAdapter:
     def presign_get(self, key: str, ttl_seconds: int = 300) -> str:
         try:
             return str(
-                self._client.generate_presigned_url(
+                self._presign_client.generate_presigned_url(
                     "get_object",
                     Params={"Bucket": self._bucket, "Key": key},
                     ExpiresIn=ttl_seconds,

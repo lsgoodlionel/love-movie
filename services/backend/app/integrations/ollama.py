@@ -52,7 +52,7 @@ class OllamaAdapter:
             raise RemoteServiceError("REMOTE_TIMEOUT", "远程文本模型响应超时") from exc
         except httpx.HTTPError as exc:
             raise RemoteServiceError("REMOTE_UNAVAILABLE", "远程文本模型暂时不可用") from exc
-        if response.status_code in {401, 403}:
+        if response.status_code in {401, 403} or 300 <= response.status_code < 400:
             raise RemoteServiceError("REMOTE_AUTH_FAILED", "远程服务认证失败")
         if response.status_code >= 500:
             raise RemoteServiceError("REMOTE_UNAVAILABLE", "远程文本模型暂时不可用")
