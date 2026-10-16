@@ -22,18 +22,18 @@ class FakeStorageClient:
 
 
 async def chunks():
-    yield b"hello "
-    yield b"movie"
+    yield b"\x00\x00\x00\x18ftyp"
+    yield b"mp42movie"
 
 
 def test_streaming_put_checks_size_digest_and_presigns() -> None:
     client = FakeStorageClient()
     adapter = StorageAdapter(client, "assets", max_bytes=100)
-    stored = asyncio.run(adapter.put_stream("tenant/video.mp4", chunks(), "video/mp4", declared_size=11))
+    stored = asyncio.run(adapter.put_stream("tenant/video.mp4", chunks(), "video/mp4", declared_size=17))
 
-    assert client.content == b"hello movie"
-    assert stored.size_bytes == 11
-    assert stored.sha256 == hashlib.sha256(b"hello movie").hexdigest()
+    assert client.content == b"\x00\x00\x00\x18ftypmp42movie"
+    assert stored.size_bytes == 17
+    assert stored.sha256 == hashlib.sha256(client.content).hexdigest()
     assert adapter.presign_get("tenant/video.mp4") == "https://objects.test/tenant/video.mp4?ttl=300"
 
 

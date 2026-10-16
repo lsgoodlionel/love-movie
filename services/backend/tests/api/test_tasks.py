@@ -36,6 +36,9 @@ def setup_app(email: str = "owner@example.com"):
 def test_task_query_is_tenant_scoped() -> None:
     app, owner, task = setup_app()
     assert owner.get(f"/api/v1/tasks/{task.id}").status_code == 200
+    listing = owner.get("/api/v1/tasks")
+    assert listing.status_code == 200
+    assert [item["id"] for item in listing.json()] == [str(task.id)]
 
     app.state.identity_repository.create_tenant_with_user(
         tenant_name="其他团队", email="other@example.com", password="safe-password-123", role="creator"
@@ -44,4 +47,22 @@ def test_task_query_is_tenant_scoped() -> None:
     other.post("/api/v1/auth/login", json={"email": "other@example.com", "password": "safe-password-123"})
     denied = other.get(f"/api/v1/tasks/{task.id}")
     assert denied.status_code == 403
+
+
+def test_task_query_is_project_member_scoped_within_tenant() -> None:
+    app, owner, task = setup_app()
+    principal = app.state.identity_repository.authenticate("owner@example.com", "safe-password-123")
+    outsider = app.state.identity_repository.create_user_in_tenant(
+        tenant_id=principal.tenant_id,
+        email="same-tenant-outsider@example.com",
+        password="safe-password-123",
+        role="creator",
+    )
+    client = TestClient(app, base_url="https://testserver")
+    client.post(
+        "/api/v1/auth/login",
+        json={"email": outsider.email, "password": "safe-password-123"},
+    )
+
+    assert client.get(f"/api/v1/tasks/{task.id}").status_code == 403
 

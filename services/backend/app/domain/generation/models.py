@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.generation.schemas import GenerationStatus
@@ -30,6 +30,7 @@ class GenerationTask(Base):
     parameters: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     workflow_version: Mapped[str] = mapped_column(String(120))
     idempotency_key: Mapped[str] = mapped_column(String(160))
+    request_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -38,6 +39,7 @@ class GenerationTask(Base):
 
 class GenerationStep(Base):
     __tablename__ = "generation_steps"
+    __table_args__ = (UniqueConstraint("generation_task_id", "name", name="uq_generation_step_task_name"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     generation_task_id: Mapped[uuid.UUID] = mapped_column(
@@ -66,7 +68,7 @@ class UsageLedger(Base):
     actual_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     fallback_reason: Mapped[str | None] = mapped_column(String(240), nullable=True)
     gpu_seconds: Mapped[float] = mapped_column(Float, default=0)
-    storage_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    storage_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     content_safety_decision: Mapped[str] = mapped_column(String(64), default="not_evaluated")
     adult_content_declared: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

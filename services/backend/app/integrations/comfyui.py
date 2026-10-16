@@ -74,7 +74,7 @@ class ComfyUIAdapter:
             except httpx.HTTPError:
                 await asyncio.sleep(self._poll_interval)
                 continue
-            if response.status_code == 1033 or response.status_code >= 500:
+            if self._is_tunnel_1033(response) or response.status_code >= 500:
                 await asyncio.sleep(self._poll_interval)
                 continue
             self._raise_for_response(response)
@@ -85,8 +85,51 @@ class ComfyUIAdapter:
             if item and item.get("status", {}).get("completed"):
                 yield ProgressEvent("completed", progress=1, outputs=item.get("outputs", {}))
                 return
+            yield ProgressEvent("progress", progress=None)
             await asyncio.sleep(self._poll_interval)
         raise RemoteServiceError("REMOTE_SOFT_TIMEOUT", "等待生成结果超时")
+
+    async def history(self, prompt_id: str) -> ProgressEvent | None:
+        try:
+            response = await self._client.get(f"/history/{prompt_id}", headers=self._access.as_dict())
+        except httpx.HTTPError as exc:
+            raise RemoteServiceError("REMOTE_UNAVAILABLE", "生成服务暂时不可用") from exc
+        self._raise_for_response(response)
+        try:
+            item = response.json().get(prompt_id)
+        except (ValueError, TypeError) as exc:
+            raise RemoteServiceError("REMOTE_INVALID_RESPONSE", "生成历史返回格式不正确") from exc
+        if item and item.get("status", {}).get("completed"):
+            return ProgressEvent("completed", 1, item.get("outputs", {}))
+        return ProgressEvent("progress", None) if item else None
+
+    async def queue_contains(self, prompt_id: str) -> bool:
+        try:
+            response = await self._client.get("/queue", headers=self._access.as_dict())
+        except httpx.HTTPError as exc:
+            raise RemoteServiceError("REMOTE_UNAVAILABLE", "生成队列暂时不可用") from exc
+        self._raise_for_response(response)
+        try:
+            payload = response.json()
+            entries = [*payload.get("queue_running", []), *payload.get("queue_pending", [])]
+            return any(prompt_id in entry for entry in entries if isinstance(entry, list))
+        except (ValueError, TypeError) as exc:
+            raise RemoteServiceError("REMOTE_INVALID_RESPONSE", "生成队列返回格式不正确") from exc
+
+    async def cancel(self, prompt_id: str) -> None:
+        try:
+            response = await self._client.post(
+                "/queue",
+                headers=self._access.as_dict(),
+                json={"delete": [prompt_id]},
+            )
+            self._raise_for_response(response)
+            interrupt = await self._client.post("/interrupt", headers=self._access.as_dict())
+            self._raise_for_response(interrupt)
+        except RemoteServiceError:
+            raise
+        except httpx.HTTPError as exc:
+            raise RemoteServiceError("REMOTE_UNAVAILABLE", "远程任务取消失败") from exc
 
     async def download_output(self, output: dict[str, str]) -> AsyncIterator[bytes]:
         params = {key: output[key] for key in ("filename", "subfolder", "type") if output.get(key)}
@@ -126,6 +169,8 @@ class ComfyUIAdapter:
     @staticmethod
     def _raise_for_response(response: httpx.Response) -> None:
         text = response.text.lower()
+        if ComfyUIAdapter._is_tunnel_1033(response):
+            raise RemoteServiceError("REMOTE_TUNNEL_UNAVAILABLE", "远程服务隧道暂时不可用")
         if response.status_code in {401, 403} or 300 <= response.status_code < 400:
             raise RemoteServiceError("REMOTE_AUTH_FAILED", "远程服务认证失败")
         if response.status_code in {408, 504, 524}:
@@ -138,6 +183,10 @@ class ComfyUIAdapter:
             raise RemoteServiceError("REMOTE_UNAVAILABLE", "远程生成服务暂时不可用")
         if response.status_code >= 400:
             raise RemoteServiceError("REMOTE_INVALID_REQUEST", "远程生成服务拒绝了请求")
+
+    @staticmethod
+    def _is_tunnel_1033(response: httpx.Response) -> bool:
+        return response.status_code in {530, 1033} and "1033" in response.text
 
     async def aclose(self) -> None:
         if self._owns_client:

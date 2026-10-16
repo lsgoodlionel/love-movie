@@ -2,6 +2,7 @@ from typing import Any
 from uuid import UUID
 
 from app.domain.generation.schemas import GenerationKind
+from app.services.exceptions import GenerationCancelled
 
 
 async def run_generation(ctx: dict[str, Any], task_id: str) -> None:
@@ -32,6 +33,8 @@ class GenerationRunner:
                 await self._video_service.run(normalized_id)
             else:
                 raise ValueError("未知生成类型")
+        except GenerationCancelled:
+            self._repository.set_status(normalized_id, "cancelled")
         except Exception as exc:
             code = getattr(exc, "code", "GENERATION_FAILED")
             self._repository.set_status(normalized_id, "failed", error_code=code)

@@ -1,8 +1,10 @@
 from pathlib import PurePosixPath
 from typing import Any
+import time
 
 from app.workflows.policies import ImageParameters
 from app.workflows.registry import WorkflowRegistry
+from app.services.exceptions import GenerationCancelled
 
 
 class ImageGenerationService:
@@ -28,6 +30,12 @@ class ImageGenerationService:
         parameters = ImageParameters.model_validate(task.parameters)
 
         async with self._gpu_lease.acquire(str(task_id)) as guard:
+            gpu_started = time.monotonic()
+            existing = self._repository.find_asset(task_id, "image")
+            if existing is not None:
+                self._repository.set_status(task_id, "completed")
+                return existing
+            await self._ensure_active(task_id, task.remote_prompt_id)
             workflow = self._workflows.render_image_workflow(parameters)
             prompt_id = task.remote_prompt_id
             if not prompt_id:
@@ -42,6 +50,8 @@ class ImageGenerationService:
             self._repository.set_status(task_id, "running")
             outputs: dict[str, Any] = {}
             async for event in self._comfyui.track(prompt_id):
+                guard.ensure_owned()
+                await self._ensure_active(task_id, prompt_id)
                 if event.kind == "completed":
                     outputs = event.outputs
                     break
@@ -52,19 +62,34 @@ class ImageGenerationService:
             content_type = "image/jpeg" if filename.lower().endswith((".jpg", ".jpeg")) else "image/png"
             stored = await self._storage.put_stream(
                 key,
-                self._comfyui.download_output(output),
+                self._guarded_download(task_id, prompt_id, guard, output),
                 content_type,
             )
             asset = self._repository.persist_asset(task_id, stored, "image")
             self._repository.record_usage(
                 task_id,
-                gpu_seconds=0,
+                gpu_seconds=max(time.monotonic() - gpu_started, 0.001),
                 storage_bytes=stored.size_bytes,
                 content_safety_decision="allowed",
                 adult_content_declared=parameters.adult_content_declared,
             )
             self._repository.set_status(task_id, "completed")
             return asset
+
+    async def _ensure_active(self, task_id: Any, prompt_id: str | None = None) -> None:
+        if self._repository.is_cancellation_requested(task_id):
+            if prompt_id:
+                try:
+                    await self._comfyui.cancel(prompt_id)
+                except Exception:
+                    self._repository.append_event(task_id, "cancel_remote_failed", "远程任务取消未确认，已停止本地处理")
+            raise GenerationCancelled()
+
+    async def _guarded_download(self, task_id: Any, prompt_id: str, guard: Any, output: dict[str, str]):
+        async for chunk in self._comfyui.download_output(output):
+            guard.ensure_owned()
+            await self._ensure_active(task_id, prompt_id)
+            yield chunk
 
     @staticmethod
     def _first_image(outputs: dict[str, Any]) -> dict[str, str]:

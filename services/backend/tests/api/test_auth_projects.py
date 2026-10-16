@@ -110,3 +110,31 @@ def test_logout_revokes_server_side_session() -> None:
     replay.cookies.set("session_token", stolen_token)
 
     assert replay.get("/api/v1/auth/me").status_code == 401
+
+
+def test_same_tenant_creator_only_sees_joined_projects() -> None:
+    app = make_app()
+    repo = app.state.identity_repository
+    tenant, owner_user = repo.create_tenant_with_user(
+        tenant_name="同一团队",
+        email="owner-team@example.com",
+        password="safe-password-123",
+        role="owner",
+    )
+    creator = repo.create_user_in_tenant(
+        tenant_id=tenant.id,
+        email="creator-team@example.com",
+        password="safe-password-123",
+        role="creator",
+    )
+    owner = repo.authenticate("owner-team@example.com", "safe-password-123")
+    hidden = repo.create_project(owner, "管理层项目")
+
+    client = TestClient(app, base_url="https://testserver")
+    assert client.post(
+        "/api/v1/auth/login",
+        json={"email": creator.email, "password": "safe-password-123"},
+    ).status_code == 200
+
+    assert client.get("/api/v1/projects").json() == []
+    assert client.get(f"/api/v1/projects/{hidden.id}").status_code == 403

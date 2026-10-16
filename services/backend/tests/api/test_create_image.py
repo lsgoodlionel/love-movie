@@ -52,6 +52,42 @@ def test_create_image_is_idempotent_and_enqueued_once() -> None:
     assert len(dispatcher.task_ids) == 1
 
 
+def test_reusing_idempotency_key_with_different_payload_is_conflict() -> None:
+    client, project_id, dispatcher = make_client()
+    headers = {"Idempotency-Key": "image-request-conflict"}
+
+    first = client.post(
+        "/api/v1/generations/images",
+        json={"project_id": project_id, "prompt": "雨夜霓虹街道"},
+        headers=headers,
+    )
+    conflict = client.post(
+        "/api/v1/generations/images",
+        json={"project_id": project_id, "prompt": "晴天海边"},
+        headers=headers,
+    )
+
+    assert first.status_code == 202
+    assert conflict.status_code == 409
+    assert len(dispatcher.task_ids) == 1
+
+
+def test_video_applies_minor_content_policy_before_enqueue() -> None:
+    client, project_id, dispatcher = make_client()
+    response = client.post(
+        "/api/v1/generations/videos",
+        json={
+            "project_id": project_id,
+            "prompt": "16岁少女裸体短片",
+            "adult_content_declared": True,
+        },
+        headers={"Idempotency-Key": "unsafe-video-1"},
+    )
+
+    assert response.status_code == 422
+    assert not dispatcher.task_ids
+
+
 def test_reviewer_is_forbidden_and_oversize_is_rejected_without_enqueue() -> None:
     reviewer, project_id, dispatcher = make_client("reviewer")
     denied = reviewer.post(

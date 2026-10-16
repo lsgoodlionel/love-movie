@@ -38,9 +38,9 @@ class Comfy:
         self.tracked: list[str] = []
         self.submitted = 0
 
-    async def track(self, prompt_id: str):
+    async def history(self, prompt_id: str):
         self.tracked.append(prompt_id)
-        yield type("Event", (), {"kind": "completed"})()
+        return type("Event", (), {"kind": "completed"})()
 
     async def submit(self, workflow, client_id):
         self.submitted += 1
@@ -59,7 +59,7 @@ def test_recovery_tracks_persisted_prompt_without_resubmission() -> None:
     comfy = Comfy()
     report = asyncio.run(RecoveryCoordinator(repo, dispatcher, comfy).recover_incomplete_tasks())
 
-    assert dispatcher.queued == ["queued"]
+    assert dispatcher.queued == ["queued", "remote"]
     assert comfy.tracked == ["prompt-9"]
     assert comfy.submitted == 0
     assert repo.attention == ["unknown"]

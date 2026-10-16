@@ -1,9 +1,12 @@
 from typing import Any
 
+import hashlib
+import json
+
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
@@ -12,6 +15,7 @@ from app.domain.generation.models import UsageLedger
 from app.domain.generation.schemas import CreateGenerationCommand, GenerationStatus
 from app.domain.assets.models import Asset
 from app.integrations.storage import StoredObject
+from app.domain.identity.models import Tenant
 
 
 _STATUS_EVENTS = {
@@ -28,6 +32,27 @@ _STATUS_EVENTS = {
 }
 
 
+class IdempotencyConflict(ValueError):
+    pass
+
+
+class QuotaExceeded(ValueError):
+    pass
+
+
+def _command_digest(command: CreateGenerationCommand) -> str:
+    payload = {
+        "tenant_id": str(command.tenant_id),
+        "project_id": str(command.project_id),
+        "created_by": str(command.created_by),
+        "kind": command.kind.value,
+        "parameters": command.parameters,
+        "workflow_version": command.workflow_version,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 class GenerationRepository:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
@@ -38,6 +63,7 @@ class GenerationRepository:
         command: CreateGenerationCommand,
         idempotency_key: str,
     ) -> tuple[GenerationTask, bool]:
+        request_digest = _command_digest(command)
         db = self._sessions()
         try:
             task = GenerationTask(
@@ -49,6 +75,7 @@ class GenerationRepository:
                 parameters=command.parameters,
                 workflow_version=command.workflow_version,
                 idempotency_key=idempotency_key,
+                request_digest=request_digest,
             )
             db.add(task)
             db.commit()
@@ -63,13 +90,74 @@ class GenerationRepository:
             )
             if existing is None:
                 raise
+            if existing.request_digest != request_digest:
+                raise IdempotencyConflict("同一幂等键不能用于不同的生成请求")
             return existing, False
         finally:
             db.close()
 
+    def ensure_quota(
+        self,
+        tenant_id: UUID,
+        *,
+        estimated_gpu_seconds: float,
+        estimated_storage_bytes: int,
+    ) -> None:
+        with self._sessions() as db:
+            tenant = db.get(Tenant, tenant_id)
+            if tenant is None:
+                raise LookupError("租户不存在")
+            gpu_used, storage_used = db.execute(
+                select(
+                    func.coalesce(func.sum(UsageLedger.gpu_seconds), 0),
+                    func.coalesce(func.sum(UsageLedger.storage_bytes), 0),
+                ).where(UsageLedger.tenant_id == tenant_id)
+            ).one()
+            if tenant.gpu_seconds_limit is not None and float(gpu_used) + estimated_gpu_seconds > tenant.gpu_seconds_limit:
+                raise QuotaExceeded("GPU 生成配额不足")
+            if tenant.storage_bytes_limit is not None and int(storage_used) + estimated_storage_bytes > tenant.storage_bytes_limit:
+                raise QuotaExceeded("素材存储配额不足")
+
     def get_task(self, task_id: Any) -> GenerationTask | None:
         with self._sessions() as db:
             return db.get(GenerationTask, task_id)
+
+    def incomplete_tasks(self) -> list[GenerationTask]:
+        with self._sessions() as db:
+            return list(
+                db.scalars(
+                    select(GenerationTask).where(
+                        GenerationTask.status.in_(
+                            {"queued", "planning", "remote_submitted", "running", "downloading", "cancelling"}
+                        )
+                    )
+                )
+            )
+
+    def mark_needs_attention(self, task_id: Any, error_code: str) -> None:
+        self.set_status(task_id, "needs_attention", error_code=error_code)
+
+    def is_cancellation_requested(self, task_id: Any) -> bool:
+        with self._sessions() as db:
+            task = db.get(GenerationTask, task_id)
+            return bool(task and task.cancellation_requested_at is not None)
+
+    def get_step(self, task_id: Any, name: str) -> GenerationStep | None:
+        with self._sessions() as db:
+            return db.scalar(
+                select(GenerationStep).where(
+                    GenerationStep.generation_task_id == task_id,
+                    GenerationStep.name == name,
+                )
+            )
+
+    def find_asset(self, task_id: Any, kind: str) -> Asset | None:
+        with self._sessions() as db:
+            return db.scalar(
+                select(Asset)
+                .where(Asset.generation_task_id == task_id, Asset.kind == kind)
+                .order_by(Asset.created_at.desc())
+            )
 
     def set_status(self, task_id: Any, status: str, **values: Any) -> None:
         allowed = {"remote_prompt_id", "error_code", "current_step", "started_at", "finished_at"}
@@ -171,6 +259,25 @@ class GenerationRepository:
                 return None, True
             return task, False
 
+    def list_tasks(
+        self,
+        tenant_id: UUID,
+        accessible_project_ids: set[UUID],
+        *,
+        project_id: UUID | None = None,
+        limit: int = 50,
+    ) -> list[GenerationTask]:
+        if not accessible_project_ids:
+            return []
+        with self._sessions() as db:
+            query = select(GenerationTask).where(
+                GenerationTask.tenant_id == tenant_id,
+                GenerationTask.project_id.in_(accessible_project_ids),
+            )
+            if project_id is not None:
+                query = query.where(GenerationTask.project_id == project_id)
+            return list(db.scalars(query.order_by(GenerationTask.created_at.desc()).limit(limit)))
+
     def request_cancellation(self, tenant_id: UUID, task_id: UUID) -> tuple[str, bool]:
         with self._sessions.begin() as db:
             task = db.get(GenerationTask, task_id)
@@ -212,11 +319,21 @@ class GenerationRepository:
                 )
             )
 
-    def list_assets(self, tenant_id: UUID, project_id: UUID | None = None) -> list[Asset]:
+    def list_assets(
+        self,
+        tenant_id: UUID,
+        project_id: UUID | None = None,
+        *,
+        accessible_project_ids: set[UUID] | None = None,
+    ) -> list[Asset]:
         with self._sessions() as db:
             query = select(Asset).where(Asset.tenant_id == tenant_id)
             if project_id is not None:
                 query = query.where(Asset.project_id == project_id)
+            elif accessible_project_ids is not None:
+                if not accessible_project_ids:
+                    return []
+                query = query.where(Asset.project_id.in_(accessible_project_ids))
             return list(db.scalars(query.order_by(Asset.created_at.desc())))
 
     def get_scoped_asset(self, tenant_id: UUID, asset_id: UUID) -> tuple[Asset | None, bool]:

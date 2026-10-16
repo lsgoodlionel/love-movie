@@ -62,7 +62,7 @@ def test_history_is_authoritative_after_websocket_failure() -> None:
 
     events = asyncio.run(collect())
     asyncio.run(client.aclose())
-    assert [event.kind for event in events] == ["progress", "completed"]
+    assert [event.kind for event in events] == ["progress", "progress", "completed"]
     assert events[-1].outputs["9"]["images"][0]["filename"] == "out.png"
 
 
@@ -73,6 +73,7 @@ def test_history_is_authoritative_after_websocket_failure() -> None:
         (httpx.Response(400, json={"error": {"type": "prompt_outputs_failed_validation", "message": "bad"}}), "WORKFLOW_VALIDATION_FAILED"),
         (httpx.Response(500, text="CUDA out of memory"), "REMOTE_OUT_OF_MEMORY"),
         (httpx.Response(524, text="<html>timeout secret</html>"), "REMOTE_TIMEOUT"),
+        (httpx.Response(530, text="Cloudflare Tunnel error 1033"), "REMOTE_TUNNEL_UNAVAILABLE"),
     ],
 )
 def test_submit_normalizes_remote_failures(response: httpx.Response, code: str) -> None:

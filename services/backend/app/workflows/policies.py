@@ -9,6 +9,13 @@ _MINOR_AGE = re.compile(r"(?:^|\D)([0-9]|1[0-7])\s*岁")
 _MINOR_TERMS = re.compile(r"未成年|儿童|小学生|初中生|child|teenager", re.IGNORECASE)
 
 
+def _validate_content(prompt: str, adult_content_declared: bool) -> None:
+    if _SEXUAL_TERMS.search(prompt) and (_MINOR_AGE.search(prompt) or _MINOR_TERMS.search(prompt)):
+        raise ValueError("禁止涉及未成年人的性化内容")
+    if _SEXUAL_TERMS.search(prompt) and not adult_content_declared:
+        raise ValueError("成人内容需要明确的成年人确认")
+
+
 class ImageParameters(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     width: int = Field(default=768, ge=256, le=2048, multiple_of=64)
@@ -20,10 +27,7 @@ class ImageParameters(BaseModel):
 
     @model_validator(mode="after")
     def validate_content_declaration(self) -> "ImageParameters":
-        if _SEXUAL_TERMS.search(self.prompt) and (_MINOR_AGE.search(self.prompt) or _MINOR_TERMS.search(self.prompt)):
-            raise ValueError("禁止涉及未成年人的性化内容")
-        if _SEXUAL_TERMS.search(self.prompt) and not self.adult_content_declared:
-            raise ValueError("成人内容需要明确的成年人确认")
+        _validate_content(self.prompt, self.adult_content_declared)
         return self
 
 
@@ -51,6 +55,12 @@ class VideoParameters(BaseModel):
     seed: int = Field(default=0, ge=0, le=2**63 - 1)
     camera_pose: CameraPose = "Zoom In"
     camera_speed: float = Field(default=0.45, ge=0.1, le=1.0)
+    adult_content_declared: bool = False
+
+    @model_validator(mode="after")
+    def validate_content_declaration(self) -> "VideoParameters":
+        _validate_content(self.prompt, self.adult_content_declared)
+        return self
 
 
 class TenantQuota(BaseModel):

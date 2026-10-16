@@ -9,10 +9,11 @@
 - 文字生成视频：Ollama 规划提示词 → 图片首帧 → Wan 图生视频
 - 当前视频安全档位：512×512、81 帧、16 FPS、20 步
 - PostgreSQL 任务与事件、Redis ARQ 队列、单 GPU 可续租租约
+- Worker 启动恢复：复用已保存的计划、步骤 prompt 与素材，不重复提交远程 GPU 作业
 - MinIO 平台素材归档、SHA-256、300 秒预签名预览
-- Web SSE 进度恢复、图片预览和 HTML5 视频播放
-- owner/admin/creator/reviewer 四种角色与租户隔离
-- 管理诊断与可运营的模型路由元数据
+- Web SSE 进度、刷新后历史任务恢复、图片预览和 HTML5 视频播放
+- owner/admin/creator/reviewer 四种角色、租户隔离与项目成员隔离
+- 可配置模型路由、租户 GPU/存储配额字段、用量流水和管理诊断
 
 远程 Ollama 和 ComfyUI 只由 API/Worker 访问。浏览器构建不包含远程 AI 主机名或 Cloudflare Access Header。
 
@@ -79,3 +80,5 @@ npx playwright test
 部署与 Secret 注入见 [docs/deployment.md](docs/deployment.md)，日常排障与恢复见 [docs/operations.md](docs/operations.md)，首个切片验收记录见 [docs/acceptance/first-generation-slice.md](docs/acceptance/first-generation-slice.md)。
 
 后续阶段将接续实现短故事配音字幕视频，以及小说/长文本拆解为分集、场景、镜头并批量生成可继续剪辑的素材。
+
+当前远程 Ollama 与 ComfyUI Tunnel 返回 Cloudflare `1033`（HTTP 530），因此本地功能、队列和恢复逻辑已验收，但真实远程图片/视频产物需在 Tunnel 恢复后补做受控烟雾测试。

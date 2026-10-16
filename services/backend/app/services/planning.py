@@ -10,6 +10,9 @@ class PlannedPrompts(BaseModel):
     image_prompt: str = Field(min_length=1, max_length=4000)
     motion_prompt: str = Field(min_length=1, max_length=4000)
     negative_prompt: str = Field(default="", max_length=4000)
+    requested_model: str | None = None
+    actual_model: str | None = None
+    fallback_reason: str | None = None
 
 
 class PlanningService:
@@ -29,5 +32,7 @@ class PlanningService:
                 "negative_prompt": getattr(raw, "negative_prompt", ""),
             }
         plan = PlannedPrompts.model_validate(raw)
+        plan.requested_model = selection.model
+        plan.actual_model = selection.model
         await self._ollama.wait_until_unloaded()
         return plan

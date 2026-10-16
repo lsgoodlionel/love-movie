@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, ValidationError
 
 from app.api.dependencies import CurrentPrincipal, get_identity_repository
-from app.domain.generation.repository import GenerationRepository
+from app.domain.generation.repository import GenerationRepository, IdempotencyConflict, QuotaExceeded
 from app.domain.generation.schemas import CreateGenerationCommand, GenerationKind
 from app.domain.identity.permissions import can_create_generation
 from app.domain.identity.repository import IdentityRepository
@@ -77,7 +77,18 @@ async def create_image(
         parameters=parameters.model_dump(),
         workflow_version="z_image_turbo:v1",
     )
-    task, created = repository.create_or_get_task(command, idempotency_key)
+    try:
+        repository.ensure_quota(
+            principal.tenant_id,
+            estimated_gpu_seconds=60,
+            estimated_storage_bytes=50 * 1024**2,
+        )
+    except QuotaExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    try:
+        task, created = repository.create_or_get_task(command, idempotency_key)
+    except IdempotencyConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if created:
         repository.set_status(task.id, "queued")
         try:
@@ -108,11 +119,11 @@ async def create_video(
             camera_pose=payload.camera_pose,
             camera_speed=payload.camera_speed,
             seed=payload.seed,
+            adult_content_declared=payload.adult_content_declared,
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail="视频参数不符合当前单镜头生成限制") from exc
     parameters = policy.model_dump()
-    parameters["adult_content_declared"] = payload.adult_content_declared
     command = CreateGenerationCommand(
         tenant_id=principal.tenant_id,
         project_id=payload.project_id,
@@ -121,7 +132,18 @@ async def create_video(
         parameters=parameters,
         workflow_version="z_image_turbo:v1+wan_i2v:v1",
     )
-    task, created = repository.create_or_get_task(command, idempotency_key)
+    try:
+        repository.ensure_quota(
+            principal.tenant_id,
+            estimated_gpu_seconds=600,
+            estimated_storage_bytes=500 * 1024**2,
+        )
+    except QuotaExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    try:
+        task, created = repository.create_or_get_task(command, idempotency_key)
+    except IdempotencyConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if created:
         repository.set_status(task.id, "queued")
         try:

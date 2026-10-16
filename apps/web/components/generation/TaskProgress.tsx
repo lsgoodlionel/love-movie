@@ -56,7 +56,7 @@ export function TaskProgress({
         source.addEventListener(kind, (event) => {
           const detail = JSON.parse((event as MessageEvent).data) as { message?: string; progress?: number };
           setMessage(detail.message || translateTaskStatus(kind));
-          setProgress(detail.progress ?? progress);
+          setProgress((current) => detail.progress ?? current);
           void getTask(taskId).then((next) => {
             setTask(next);
             onChange?.(next);

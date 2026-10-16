@@ -38,3 +38,8 @@ def test_sexualized_minor_content_is_rejected() -> None:
 def test_adult_content_requires_explicit_adult_declaration() -> None:
     with pytest.raises(ValidationError, match="成年人确认"):
         ImageParameters(prompt="一名成年人的性感裸露艺术写真", adult_content_declared=False)
+
+
+def test_video_minor_sexual_content_is_always_rejected() -> None:
+    with pytest.raises(ValidationError, match="未成年人"):
+        VideoParameters(prompt="未成年少女裸体短片", adult_content_declared=True)

@@ -1,13 +1,14 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from app.api.dependencies import CurrentPrincipal
+from app.api.dependencies import CurrentPrincipal, get_identity_repository
 from app.api.generations import get_generation_repository
 from app.domain.generation.repository import GenerationRepository
+from app.domain.identity.repository import IdentityRepository, Principal
 from app.services.cancellation import CancellationService
 from app.services.progress import encode_sse
 
@@ -24,12 +25,42 @@ class TaskResponse(BaseModel):
     error_code: str | None
 
 
-def _task_or_error(repository: GenerationRepository, tenant_id: UUID, task_id: UUID):
-    task, forbidden = repository.get_scoped_task(tenant_id, task_id)
+@router.get("", response_model=list[TaskResponse])
+def list_tasks(
+    principal: CurrentPrincipal,
+    repository: Annotated[GenerationRepository, Depends(get_generation_repository)],
+    identity: Annotated[IdentityRepository, Depends(get_identity_repository)],
+    project_id: UUID | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> list[TaskResponse]:
+    accessible_ids = {project.id for project in identity.list_projects(principal)}
+    if project_id is not None and project_id not in accessible_ids:
+        raise HTTPException(status_code=403, detail="无权访问该项目任务")
+    return [
+        TaskResponse.model_validate(task, from_attributes=True)
+        for task in repository.list_tasks(
+            principal.tenant_id,
+            accessible_ids,
+            project_id=project_id,
+            limit=limit,
+        )
+    ]
+
+
+def _task_or_error(
+    repository: GenerationRepository,
+    identity: IdentityRepository,
+    principal: Principal,
+    task_id: UUID,
+):
+    task, forbidden = repository.get_scoped_task(principal.tenant_id, task_id)
     if forbidden:
         raise HTTPException(status_code=403, detail="无权访问该生成任务")
     if task is None:
         raise HTTPException(status_code=404, detail="生成任务不存在")
+    project, project_forbidden = identity.get_project(principal, task.project_id)
+    if project_forbidden or project is None:
+        raise HTTPException(status_code=403, detail="无权访问该生成任务")
     return task
 
 
@@ -38,9 +69,10 @@ def get_task(
     task_id: UUID,
     principal: CurrentPrincipal,
     repository: Annotated[GenerationRepository, Depends(get_generation_repository)],
+    identity: Annotated[IdentityRepository, Depends(get_identity_repository)],
 ) -> TaskResponse:
     return TaskResponse.model_validate(
-        _task_or_error(repository, principal.tenant_id, task_id), from_attributes=True
+        _task_or_error(repository, identity, principal, task_id), from_attributes=True
     )
 
 
@@ -49,9 +81,10 @@ def task_events(
     task_id: UUID,
     principal: CurrentPrincipal,
     repository: Annotated[GenerationRepository, Depends(get_generation_repository)],
+    identity: Annotated[IdentityRepository, Depends(get_identity_repository)],
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
 ) -> Response:
-    _task_or_error(repository, principal.tenant_id, task_id)
+    _task_or_error(repository, identity, principal, task_id)
     try:
         cursor = int(last_event_id or 0)
     except ValueError as exc:
@@ -65,8 +98,9 @@ def cancel_task(
     task_id: UUID,
     principal: CurrentPrincipal,
     repository: Annotated[GenerationRepository, Depends(get_generation_repository)],
+    identity: Annotated[IdentityRepository, Depends(get_identity_repository)],
 ) -> dict[str, str]:
-    _task_or_error(repository, principal.tenant_id, task_id)
+    _task_or_error(repository, identity, principal, task_id)
     status, forbidden = CancellationService(repository).cancel(principal.tenant_id, task_id)
     if forbidden:
         raise HTTPException(status_code=403, detail="无权取消该生成任务")

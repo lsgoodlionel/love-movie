@@ -21,6 +21,12 @@ class Repo:
     def get_task(self, task_id):
         return self.task
 
+    def find_asset(self, task_id, kind):
+        return None
+
+    def is_cancellation_requested(self, task_id):
+        return False
+
     def set_status(self, task_id, status, **values):
         self.timeline.append(status)
         for key, value in values.items():
@@ -49,6 +55,9 @@ class Comfy:
 
     async def download_output(self, output):
         yield b"png-bytes"
+
+    async def cancel(self, prompt_id):
+        raise AssertionError("不应取消")
 
 
 class Storage:

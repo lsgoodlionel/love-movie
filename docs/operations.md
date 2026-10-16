@@ -12,10 +12,11 @@
 ## 生成任务恢复
 
 1. PostgreSQL 是任务、步骤和素材的权威状态。
-2. 已保存 `remote_prompt_id` 的任务必须先查询 ComfyUI history/queue，再决定继续追踪或人工处理。
+2. Worker 启动会扫描未完成任务；已保存 `remote_prompt_id` 的任务先查询 ComfyUI history，再查询 queue，并用同一任务和 prompt 恢复追踪。
 3. Cloudflare `1033`、WebSocket 中断或 Worker 重启都不能授权再次调用 `/prompt`。
 4. 提交结果不确定且没有持久化 `prompt_id` 时，将任务置为 `needs_attention`，禁止自动重复生成。
 5. Redis GPU 租约使用 owner token、TTL、续租和 compare-and-delete；租约丢失后下一远程步骤必须停止。
+6. 取消已提交任务时，平台先记录取消意图，再尝试从 ComfyUI queue 删除并中断当前单 GPU 作业；远程取消未确认会写入事件，但本地不会继续下载或归档结果。
 
 ## 常见稳定错误码
 

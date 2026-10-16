@@ -18,6 +18,7 @@ class Repo:
             tenant_id="tenant",
             project_id="project",
             parameters={"prompt": "山谷晨雾", "camera_pose": "Zoom In", "camera_speed": 0.45, "seed": 7},
+            remote_prompt_id=None,
         )
         self.timeline: list[str] = []
         self.prompts: dict[str, str] = {}
@@ -28,16 +29,35 @@ class Repo:
 
     def set_status(self, task_id, status, **values):
         self.timeline.append(status)
+        for key, value in values.items():
+            setattr(self.task, key, value)
 
     def persist_plan(self, task_id, plan):
         self.timeline.append("plan")
+        self.task.parameters["plan"] = plan.model_dump()
+
+    def get_step(self, task_id, name):
+        prompt_id = self.prompts.get(name)
+        return SimpleNamespace(remote_prompt_id=prompt_id) if prompt_id else None
+
+    def find_asset(self, task_id, kind):
+        return next((asset for asset in reversed(self.assets) if asset.kind == kind), None)
+
+    def is_cancellation_requested(self, task_id):
+        return False
 
     def persist_step_prompt(self, task_id, step, prompt_id):
         self.prompts[step] = prompt_id
         self.timeline.append(f"prompt:{step}")
 
     def persist_asset(self, task_id, stored, kind, parent_asset_id=None):
-        asset = SimpleNamespace(id=f"asset-{kind}", object_key=stored.key, parent_asset_id=parent_asset_id)
+        asset = SimpleNamespace(
+            id=f"asset-{kind}",
+            kind=kind,
+            object_key=stored.key,
+            parent_asset_id=parent_asset_id,
+            size_bytes=stored.size_bytes,
+        )
         self.assets.append(asset)
         self.timeline.append(f"asset:{kind}")
         return asset
@@ -87,11 +107,21 @@ class Comfy:
         self.uploads.append((name, content, overwrite))
         return name
 
+    async def cancel(self, prompt_id):
+        raise AssertionError("不应取消")
+
 
 class Storage:
+    def __init__(self) -> None:
+        self.objects = {}
+
     async def put_stream(self, key, source, content_type, declared_size=None):
         content = b"".join([chunk async for chunk in source])
+        self.objects[key] = content
         return StoredObject(key, content_type, len(content), "digest")
+
+    def get_bytes(self, key):
+        return self.objects[key]
 
 
 class Lease:
@@ -123,3 +153,25 @@ def test_ollama_unload_timeout_prevents_any_comfy_submission() -> None:
         asyncio.run(service.run("task-video"))
     assert caught.value.code == "REMOTE_SOFT_TIMEOUT"
     assert comfy.submits == 0
+
+
+def test_video_resume_reuses_plan_first_frame_and_video_prompt() -> None:
+    repo = Repo()
+    repo.task.parameters["plan"] = PlannedPrompts(
+        title="山谷",
+        image_prompt="山谷晨雾，电影感",
+        motion_prompt="镜头缓慢推进，薄雾流动",
+        negative_prompt="水印，抖动",
+    ).model_dump()
+    storage = Storage()
+    stored = StoredObject("tenant/project/task-video/first-frame-frame.png", "image/png", 5, "digest")
+    storage.objects[stored.key] = b"image"
+    repo.persist_asset("task-video", stored, "image")
+    repo.prompts["video"] = "prompt-resume-video"
+    planner = Planner()
+    comfy = Comfy(repo)
+
+    video = asyncio.run(VideoGenerationService(repo, planner, comfy, storage, Lease()).run("task-video"))
+
+    assert comfy.submits == 0
+    assert video.parent_asset_id == "asset-image"

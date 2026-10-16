@@ -10,7 +10,7 @@ import { TaskProgress } from "../../../components/generation/TaskProgress";
 import { ApiError, api } from "../../../lib/api/client";
 import { accessAsset, listAssets } from "../../../lib/api/assets";
 import { GenerationKind } from "../../../lib/api/generations";
-import { Task } from "../../../lib/api/tasks";
+import { listTasks, Task } from "../../../lib/api/tasks";
 
 type Project = { id: string; name: string };
 
@@ -23,7 +23,23 @@ export default function GeneratePage() {
   const [recent, setRecent] = useState<RecentTask[]>([]);
 
   useEffect(() => {
-    api<Project[]>("/v1/projects").then(setProjects).catch((error) => {
+    api<Project[]>("/v1/projects").then((loadedProjects) => {
+      setProjects(loadedProjects);
+      void listTasks().then((tasks) => {
+        setRecent(tasks.map((task) => ({
+          id: task.id,
+          kind: task.kind,
+          status: task.status,
+          prompt: task.kind === "image" ? "历史图片任务" : "历史视频任务",
+        })));
+        const saved = window.localStorage.getItem("love-movie:last-task");
+        const active = tasks.find((task) => task.id === saved) ?? tasks[0];
+        if (active) {
+          setTaskId(active.id);
+          setProjectId(active.project_id);
+        }
+      }).catch(() => setRecent([]));
+    }).catch((error) => {
       if (error instanceof ApiError && error.status === 401) router.replace("/login");
       else setProjects([]);
     });
@@ -56,6 +72,7 @@ export default function GeneratePage() {
             setTaskId(id);
             setProjectId(selectedProject);
             setPreview(null);
+            window.localStorage.setItem("love-movie:last-task", id);
             setRecent((items) => [{ id, kind, status: "queued", prompt: kind === "image" ? "新图片任务" : "新视频任务" }, ...items]);
           }} />
         </div>

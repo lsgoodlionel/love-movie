@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { ApiError } from "../../lib/api/client";
 import { createGeneration, GenerationKind } from "../../lib/api/generations";
@@ -27,6 +27,7 @@ export function GenerationForm({
   const [cameraPose, setCameraPose] = useState("Zoom In");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const retryIdentity = useRef<{ fingerprint: string; key: string } | null>(null);
   const pending = forcedPending ?? submitting;
 
   useEffect(() => {
@@ -39,14 +40,20 @@ export function GenerationForm({
     setSubmitting(true);
     setError("");
     try {
-      const accepted = await createGeneration(kind, {
+      const input = {
         project_id: projectId,
         prompt: prompt.trim(),
         seed,
         ...(kind === "image"
           ? { width: 768, height: 1024 }
           : { camera_pose: cameraPose, camera_speed: 0.45 }),
-      });
+      };
+      const fingerprint = JSON.stringify({ kind, ...input });
+      if (retryIdentity.current?.fingerprint !== fingerprint) {
+        retryIdentity.current = { fingerprint, key: crypto.randomUUID() };
+      }
+      const accepted = await createGeneration(kind, input, retryIdentity.current.key);
+      retryIdentity.current = null;
       onAccepted(accepted.task_id, projectId, kind);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.detail : "提交失败，请稍后重试");

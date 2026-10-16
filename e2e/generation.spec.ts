@@ -9,6 +9,7 @@ async function mockStudio(page: Page) {
     }
   });
   await page.route("**/api/v1/generations/**", (route) => route.fulfill({ status: 202, json: { task_id: "task-1", status: "queued" } }));
+  await page.route("**/api/v1/tasks", (route) => route.fulfill({ json: [] }));
   await page.route("**/api/v1/tasks/task-1", (route) => route.fulfill({ json: { id: "task-1", project_id: "project-1", kind: "image", status: "completed", current_step: null, error_code: null } }));
   await page.route("**/api/v1/tasks/task-1/events", (route) => route.fulfill({ contentType: "text/event-stream", body: "id: 1\nevent: completed\ndata: {\"message\":\"生成完成\",\"progress\":100}\n\n" }));
   await page.route("**/api/v1/assets?**", (route) => route.fulfill({ json: [{ id: "asset-1", project_id: "project-1", generation_task_id: "task-1", parent_asset_id: null, kind: "image", content_type: "image/png", size_bytes: 100 }] }));

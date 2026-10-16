@@ -41,6 +41,22 @@ class IdentityRepository:
             db.add(Membership(tenant_id=tenant.id, user_id=user.id, role=Role(role).value))
             return tenant, user
 
+    def create_user_in_tenant(
+        self,
+        *,
+        tenant_id: UUID,
+        email: str,
+        password: str,
+        role: str,
+        is_active: bool = True,
+    ) -> User:
+        with self._sessions.begin() as db:
+            user = User(email=email.casefold(), password_hash=hash_password(password), is_active=is_active)
+            db.add(user)
+            db.flush()
+            db.add(Membership(tenant_id=tenant_id, user_id=user.id, role=Role(role).value))
+            return user
+
     def authenticate(self, email: str, password: str) -> Principal | None:
         with self._sessions() as db:
             row = db.execute(
@@ -104,7 +120,10 @@ class IdentityRepository:
 
     def list_projects(self, principal: Principal) -> list[Project]:
         with self._sessions() as db:
-            return list(db.scalars(select(Project).where(Project.tenant_id == principal.tenant_id)))
+            query = select(Project).where(Project.tenant_id == principal.tenant_id)
+            if principal.role not in {Role.OWNER, Role.ADMIN}:
+                query = query.join(ProjectMember).where(ProjectMember.user_id == principal.user_id)
+            return list(db.scalars(query.order_by(Project.created_at.desc())))
 
     def get_project(self, principal: Principal, project_id: UUID) -> tuple[Project | None, bool]:
         with self._sessions() as db:
@@ -113,4 +132,13 @@ class IdentityRepository:
                 return None, False
             if project.tenant_id != principal.tenant_id:
                 return None, True
+            if principal.role not in {Role.OWNER, Role.ADMIN}:
+                membership = db.scalar(
+                    select(ProjectMember).where(
+                        ProjectMember.project_id == project_id,
+                        ProjectMember.user_id == principal.user_id,
+                    )
+                )
+                if membership is None:
+                    return None, True
             return project, False
