@@ -25,6 +25,9 @@
 - 最终音频是字幕和口型的权威时间轴；先生成语音和词级对齐，再生成字幕和口型，字幕误差目标不超过 120ms。
 - Character Bible 与 Scene Bible、角色/场景主参考、实际 seed/模型/LoRA/IP-Adapter/FaceID 参数均版本化并随镜头追溯。
 - 口型/对齐模型、允许误差、一致性阈值、转场策略和局部重试次数使用租户级后台生产策略，不硬编码。
+- 每个镜头和 Render 必须区分 `generated_keyframe_motion` 与 `full_generated_video`，关键图运动化不得标成完整生成式视频。
+- `lip_sync_verified` 默认 false；只有官方 InfiniteTalk 完整模型栈在 RTX 3060 12GB 上真实通过后才能置 true，镜头规避可见嘴部不等于口型已验证。
+- 合成案例必须保留虚构声明；Z-Image INT8 `int8_tensorwise` 已知不兼容工作流不得作为自动回退。
 - media-worker 不持有 GPU 租约；所有媒体输入先从平台对象存储下载，输出校验后再写回平台对象存储。
 - 合成前统一分辨率、FPS、SAR、色彩空间和 `yuv420p`；成片必须通过 ffprobe 可解码性与时长校验。
 - 多租户、项目成员权限、幂等、配额预留、取消、恢复和敏感信息过滤继续沿用首个切片规则。
@@ -34,7 +37,7 @@
 
 - Ollama 返回缺字段、重复镜头 ID、总时长超限或无法解析 JSON：规划任务应进入可修订失败状态，不创建半成品镜头，也不消耗 GPU。
 - 两个浏览器标签同时批准同一分镜/关键帧或修改已批准版本：只产生一组任务；修改必须创建保留来源的新版本。
-- 多人镜头 speaker 锁定错误、静音持续张嘴或字幕超出 120ms：阻止成片，只重做对应镜头口型/对齐层，不重做已通过语音。
+- 多人镜头 speaker 锁定错误、静音持续张嘴、字幕超出 120ms 或未验证口型被标成 true：阻止成片，只重做对应镜头口型/对齐层，不重做已通过语音。
 - queue 非空、`/free` 失败或 Access 401/403：不得继续提交或自动并发重试，401/403 固定显示“服务认证失败”。
 - 人物/场景漂移或转场出现闪黑帧、主体变形、节奏停顿、对白截断：Gate 定位到具体 shot/transition，只进入局部重试。
 
@@ -65,16 +68,18 @@ apps/web/
 - Create: `services/backend/app/domain/production/schemas.py`
 - Create: `services/backend/app/domain/production/repository.py`
 - Create: `services/backend/alembic/versions/0009_short_story_production.py`
+- Modify: `services/backend/app/domain/generation/models.py`
+- Modify: `services/backend/app/domain/generation/repository.py`
 - Test: `services/backend/tests/domain/test_production_hierarchy.py`
 - Test: `services/backend/tests/domain/test_production_versioning.py`
 
 **Interfaces:**
 - Consumes: `Tenant`, `Project`, `User`, `GenerationTask`, `Asset`。
-- Produces: `Production`, `ProductionVersion`, `Episode`, `Scene`, `Shot`, `CharacterCard`, `CharacterReferenceVersion`, `SceneBible`, `SceneReferenceVersion`, `StyleBible`, `DialogueLine`, `WordAlignment`, `SubtitleCue`, `ShotQualityCheck`, `Timeline`, `TimelineClip`, `TimelineTransition`, `Render`; `ProductionRepository.create_version(...)`; `approve_storyboard(...)`; `revise_from(version_id) -> ProductionVersion`。
+- Produces: `Production`, `ProductionVersion`, `Episode`, `Scene`, `Shot`, `CharacterCard`, `CharacterReferenceVersion`, `SceneBible`, `SceneReferenceVersion`, `StyleBible`, `DialogueLine`, `WordAlignment`, `SubtitleCue`, `ShotQualityCheck`, `Timeline`, `TimelineClip`, `TimelineTransition`, `Render`; `MediaGenerationMode = generated_keyframe_motion|full_generated_video`; `GenerationStep.checkpoint_data/qa_status`; `ProductionRepository.create_version(...)`; `approve_storyboard(...)`; `revise_from(version_id) -> ProductionVersion`。
 
 - [ ] **Step 1: Write failing hierarchy and versioning tests**
 
-覆盖租户/项目外键、短故事默认单集、场景与镜头稳定排序、六镜头总时长约 30 秒、批准后的内容不可原地改写、修订创建新版本并保留来源版本；角色/场景主参考可版本化和锁定，刷新读取保持同一上下文。
+覆盖租户/项目外键、短故事默认单集、场景与镜头稳定排序、六镜头总时长约 30 秒、批准后的内容不可原地改写、修订创建新版本并保留来源版本；角色/场景主参考可版本化和锁定，刷新读取保持同一上下文。验证镜头/时间线/Render 保存 `media_generation_mode`，关键图运动镜头必须有 `source_image_id` 和 shot/cue 映射；`lip_sync_verified` 默认 false；GenerationStep 恢复点与 QA 状态可独立更新。
 
 - [ ] **Step 2: Run focused tests and verify RED**
 
@@ -84,7 +89,7 @@ Expected: FAIL because `app.domain.production` and migration `0009` do not exist
 
 - [ ] **Step 3: Implement models, schemas, repository transactions and migration**
 
-镜头保存 `order_index`、目标时长、景别、机位、动作、动作起止、视线/屏幕运动方向、视觉提示词、`transition_reason`、旁白/对白引用、批准状态、关键帧/原视频/口型视频当前素材 ID 和 `lip_sync_status`。`DialogueLine`、`WordAlignment` 与 `SubtitleCue` 共同保存 `dialogue_id`、`speaker_id`、`shot_id`、`audio_asset_id`、`subtitle_cue_id`、`start_ms/end_ms` 和词级时间戳；角色/场景参考保存主资产、实际 seed、模型/LoRA/IP-Adapter/FaceID 参数版本。版本状态使用 `draft|planned|storyboard_approved|keyframes_approved|render_ready|completed`。
+镜头保存 `order_index`、目标时长、景别、机位、动作、动作起止、视线/屏幕运动方向、视觉提示词、`transition_reason`、旁白/对白引用、批准状态、`media_generation_mode`、`source_image_id`、关键帧/原视频/口型视频当前素材 ID、`lip_sync_status` 和 `lip_sync_verified=false`。`DialogueLine`、`WordAlignment` 与 `SubtitleCue` 共同保存 `dialogue_id`、`speaker_id`、`shot_id`、`audio_asset_id`、`subtitle_cue_id`、`start_ms/end_ms` 和词级时间戳；角色/场景参考保存主资产、实际 seed、模型/LoRA/IP-Adapter/FaceID 参数版本。GenerationStep 新增 JSON 恢复点和 `qa_status=pending|passed|failed|not_applicable|passed_with_limitations`，长文本步骤固定为 `source_preprocessed|production_design_locked|keyframes_generated|narration_generated|alignment_completed|timeline_built|subtitles_built|audio_mixed|render_packaged|qa_completed`。版本状态使用 `draft|planned|storyboard_approved|keyframes_approved|render_ready|completed`。
 
 - [ ] **Step 4: Apply migration and verify GREEN**
 
@@ -95,7 +100,7 @@ Expected: PASS and `uv run alembic check` reports no new operations.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add services/backend/app/domain/production services/backend/alembic/versions/0009_short_story_production.py services/backend/tests/domain
+git add services/backend/app/domain/production services/backend/app/domain/generation services/backend/alembic/versions/0009_short_story_production.py services/backend/tests/domain
 git commit -m "feat: model versioned short story productions"
 ```
 
@@ -190,7 +195,7 @@ git commit -m "feat: expose storyboard review workflow"
 
 - [ ] **Step 1: Write failing approval-gate, duplicate-click and recovery tests**
 
-验证未批准分镜不能生成关键帧、未批准关键帧不能生成视频、六镜头任务严格串行、单镜头失败可独立重试、Worker 重启复用已有 prompt_id/素材且不重复提交；续镜继承上一镜已通过的角色/场景参考和末帧，实际 seed/模型/适配器参数快照可追溯。
+验证未批准分镜不能生成关键帧、未批准关键帧不能生成视频、六镜头任务严格串行、单镜头失败可独立重试、Worker 重启复用已有 prompt_id/素材/恢复点且不重复提交；续镜继承上一镜已通过的角色/场景参考和末帧，实际 seed/模型/适配器参数快照可追溯。Z-Image INT8 出现 `int8_tensorwise` 时必须明确失败或使用管理员配置的 Wan 2.2 工作流，不得静默自动回退。
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -198,7 +203,7 @@ Run: `cd services/backend && uv run pytest tests/services/test_shot_generation.p
 
 - [ ] **Step 3: Implement shot-to-generation linkage and batch orchestration**
 
-关键帧与镜头视频仍是普通 GenerationTask/GenerationStep/Asset；Shot 只保存当前选择、来源引用和生产策略快照。队列按镜头顺序提交，但 GPU 租约仍是全局并发 1；连续动作把上一镜末帧作为下一镜视觉条件，跨场景变化必须带 `transition_reason`。
+关键帧与镜头视频仍是普通 GenerationTask/GenerationStep/Asset；Shot 只保存当前选择、来源引用和生产策略快照。队列按镜头顺序提交，但 GPU 租约仍是全局并发 1；连续动作把上一镜末帧作为下一镜视觉条件，跨场景变化必须带 `transition_reason`。限定 PID 的 Windows 服务恢复后重新核验 win32、8190、队列和模型清单，再从恢复点继续，已完成素材不得重新生成。
 
 - [ ] **Step 4: Verify GREEN and existing recovery suite**
 
@@ -293,7 +298,7 @@ git commit -m "feat: add media quality and processing worker"
 
 - [ ] **Step 1: Write failing audio contract, provider, timing, queue and tenant-isolation tests**
 
-验证：ACE 工作流固定同时包含 0.6B/1.7B 编码器；Stable Audio 只开放白名单参数；提交前 queue 为空并调用 `/free`，结束/失败后再次 `/free`；queue 非空不提交且不自动并发重试；401/403 映射“服务认证失败”。验证 Qwen TTS Provider 未配置时阻止合成、音频失败不创建假素材、相同输入幂等复用音频；最终音频产生词级时间戳，字幕逐字匹配、单调、不跨镜头且起止误差不超过 120ms；多人镜头未锁定 speaker 时禁止口型任务，静音人物不得持续张嘴。
+验证：ACE 工作流固定同时包含 0.6B/1.7B 编码器；Stable Audio 只开放白名单参数；提交前 queue 为空并调用 `/free`，结束/失败后再次 `/free`；queue 非空不提交且不自动并发重试；401/403 映射“服务认证失败”。验证 Qwen TTS Provider 未配置时阻止合成、音频失败不创建假素材、相同输入幂等复用音频；最终音频产生词级时间戳，字幕逐字匹配、单调、不跨镜头且起止误差不超过 120ms；多人镜头未锁定 speaker 时禁止口型任务，静音人物不得持续张嘴。未经 InfiniteTalk 12GB 真实验收时 `lip_sync_verified` 始终为 false；规避可见嘴部的镜头使用 `not_required_by_shot_design`，不能伪造已验证状态。
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -305,7 +310,7 @@ Run: `cd services/backend && uv run pytest tests/integrations/test_audio_provide
 
 - [ ] **Step 4: Implement Qwen3-TTS, alignment, subtitles, lip sync and lineage**
 
-Qwen3-TTS 只通过已交付的服务端受控契约调用，默认 voice/instruction 由后台白名单管理，Provider Secret 不写数据库。先持久化最终语音 Asset，再强制对齐并保存句/词级时间戳，随后生成 SRT/ASS 和口型派生视频；原视频、口型版、对齐结果、字幕和最终输出建立父子素材关系。口型失败只把该镜头的 `lip_sync` GenerationStep 标记为可重做，不重新生成已通过语音或原视频。
+Qwen3-TTS 只通过已交付的服务端受控契约调用，默认 voice/instruction 由后台白名单管理，Provider Secret 不写数据库。先持久化最终语音 Asset，再按实际语音时长（不是文本长度估算）强制对齐并保存句/词级时间戳，随后生成底部安全区白字暗色描边/底板的 SRT/ASS 和口型派生视频；原视频、口型版、对齐结果、字幕和最终输出建立父子素材关系。口型失败只把该镜头的 `lip_sync` GenerationStep 标记为可重做，不重新生成已通过语音或原视频。
 
 - [ ] **Step 5: Verify GREEN and full backend suite**
 
@@ -333,7 +338,7 @@ git commit -m "feat: add traceable audio alignment and lip sync"
 
 - [ ] **Step 1: Write failing timeline validation and render idempotency tests**
 
-覆盖镜头排序、裁切越界、转场类型/时长不在租户策略白名单时拒绝、句柄区间越界、音量范围、素材跨租户拒绝、缺失镜头/TTS/对齐/口型/连续性 Gate 阻止导出、相同 revision 重复点击只创建一个 render。验证动作连续镜头优先 hard-cut/match-cut，配乐和环境音跨镜头连续，旁白时自动 ducking，对白切点不截断呼吸和尾音。
+覆盖镜头排序、裁切越界、转场类型/时长不在租户策略白名单时拒绝、句柄区间越界、音量范围、素材跨租户拒绝、缺失镜头/TTS/对齐/连续性 Gate 阻止导出；只有 `visible_speech_required=true` 的镜头缺失已验证口型时阻止导出，`not_required_by_shot_design` 可带明确限制完成。相同 revision 重复点击只创建一个 render。验证动作连续镜头优先 hard-cut/match-cut，配乐和环境音跨镜头连续，旁白时自动 ducking，对白切点不截断呼吸和尾音。
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -345,7 +350,7 @@ Run: `cd services/backend && uv run pytest tests/services/test_timeline_render.p
 
 - [ ] **Step 4: Probe and persist final render atomically**
 
-逐转场检查首尾帧运动向量、主体位置、曝光、色温以及闪帧/黑帧/主体变形/节奏停顿；通过后再由 ffprobe 和完整解码验证可解码、分辨率、FPS、像素格式和时长，最后创建 Asset/Render 完成记录。失败保存具体 transition/shot Gate、脱敏诊断和可重试输入，不覆盖上一版成片。
+逐转场检查首尾帧运动向量、主体位置、曝光、色温以及闪帧/黑帧/主体变形/节奏停顿；音频 Gate 验证 LUFS、True Peak、采样率、声道和全片解码，不只判断文件存在。通过后再由 ffprobe 和完整解码验证可解码、分辨率、FPS、像素格式和时长，最后创建 Asset/Render 完成记录。失败保存具体 transition/shot Gate、脱敏诊断和可重试输入，不覆盖上一版成片。
 
 - [ ] **Step 5: Verify GREEN**
 
@@ -386,7 +391,7 @@ git commit -m "feat: render versioned short story timelines"
 
 - [ ] **Step 2: Write failing component tests**
 
-验证规划前后状态、六镜头编辑、批准确认、未批准按钮禁用、时间线重排/裁切/转场/音量、字幕编辑和刷新恢复。每张镜头卡必须显示语音、字幕、口型、角色一致性、环境一致性、转场和人工复核状态；失败操作只提交对应 `shot_id + step` 的局部重做。角色/场景主参考刷新后保持选中；Access 错误显示“服务认证失败”；Provider 未配置时按钮禁用并显示“未配置”。
+验证规划前后状态、六镜头编辑、批准确认、未批准按钮禁用、时间线重排/裁切/转场/音量、字幕编辑和刷新恢复。每张镜头卡必须显示 `source_image_id`、shot/cue 关系、恢复点、语音、字幕、口型、角色一致性、环境一致性、转场和人工复核状态；失败操作只提交对应 `shot_id + step` 的局部重做。界面分别标记“关键图运动成片”与“完整生成式视频”，并独立显示“真实口型已验证/未验证/镜头设计无需口型”。角色/场景主参考刷新后保持选中；Access 错误显示“服务认证失败”；Provider 未配置时按钮禁用并显示“未配置”。
 
 - [ ] **Step 3: Run tests and verify RED**
 
@@ -412,6 +417,7 @@ git commit -m "feat: add short story production workspace"
 **Files:**
 - Create: `e2e/short-story.spec.ts`
 - Create: `docs/acceptance/short-story-production.md`
+- Create: `docs/acceptance/case-0001-long-form.md`
 - Modify: `README.md`
 - Modify: `docs/operations.md`
 - Modify: `docs/superpowers/specs/2026-10-16-ai-video-studio-design.md`
@@ -421,7 +427,7 @@ git commit -m "feat: add short story production workspace"
 
 - [ ] **Step 1: Write failing Playwright journey**
 
-使用确定性适配器覆盖创建作品、规划、编辑、批准、关键帧、镜头、最终语音、词级对齐、字幕、speaker 锁定、口型、人物/环境连续性质检、逐阶段局部重做、转场、混音、成片、刷新恢复和审阅者只读。
+使用确定性适配器覆盖创建作品、规划、编辑、批准、关键帧、镜头、最终语音、词级对齐、字幕、speaker 锁定、口型、人物/环境连续性质检、逐阶段局部重做、转场、混音、成片、刷新恢复和审阅者只读。断言关键图运动作品不能显示为完整生成视频，`lip_sync_verified` 默认 false，恢复后不重复生成已完成素材，合成案例页面显示虚构声明。
 
 - [ ] **Step 2: Run browser test and verify RED**
 
@@ -437,7 +443,9 @@ Run backend full suite, frontend tests/typecheck/build, Playwright, `docker comp
 
 - [ ] **Step 5: Run controlled real-provider acceptance**
 
-先验证 Ollama、Windows 原生 ComfyUI、Qwen3-TTS/对齐/口型 Provider 健康与 ComfyUI 队列为空；确认任务前后 `/free` 且无并发重试。生成一个六镜头约 30 秒故事，并执行最终 Gate：逐句试听和口型检查、字幕与语音误差不超过 120ms、逐镜头首中末帧人物/环境一致性、逐转场播放、ffprobe 与完整解码。记录脱敏 task/render IDs、各阶段耗时、工作流/模型/策略版本、质检分数、音视频 probe 摘要、浏览器播放结果和局部重试情况，不记录 Secret、完整私密原文或原始远程日志。
+先验证 Ollama、Windows 原生 ComfyUI、Qwen3-TTS/对齐/口型 Provider 健康与 ComfyUI 队列为空；确认任务前后 `/free` 且无并发重试。生成一个六镜头约 30 秒故事，并执行最终 Gate：逐句试听和口型检查、字幕与语音误差不超过 120ms、逐镜头首中末帧人物/环境一致性、逐转场播放、LUFS/True Peak/采样率/声道、ffprobe 与完整解码。记录脱敏 task/render IDs、各阶段耗时、工作流/模型/策略版本、质检分数、音视频 probe 摘要、浏览器播放结果和局部重试情况，不记录 Secret、完整私密原文或原始远程日志。
+
+CASE-0001 作为已验证参考回归：24 段旁白、24 条字幕、15 张有效图中 13 张进入 24 片段时间线，输出 245.440 秒 H.264 1280×720 16fps + AAC 48kHz 双声道，-15.9 LUFS、True Peak -1.5 dBFS，全片解码通过。验收记录必须标明 `media_generation_mode=generated_keyframe_motion`、`lip_sync_verified=false` 和 `status=passed_with_documented_limitations`，不得把它计为完整生成视频或真实 InfiniteTalk 口型通过。
 
 - [ ] **Step 6: Update durable docs and acceptance evidence**
 
@@ -453,11 +461,13 @@ git commit -m "docs: verify short story production pipeline"
 ## Completion Contract
 
 - 六镜头短故事从文字规划到 MP4 成片可在 Web 完成，所有 GPU 消耗均在明确批准之后。
+- 每个镜头和 Render 明确区分 `generated_keyframe_motion` 与 `full_generated_video`，并保留 `source_image_id`、shot/cue、Bible、恢复点和 QA 血缘。
 - 最终语音、词级时间戳、字幕和口型使用同一权威时间轴；字幕起止误差目标不超过 120ms，speaker 锁定正确，静音人物不持续张嘴。
+- `lip_sync_verified` 默认 false；镜头设计规避可见嘴部可以记录限制并成片，但不得宣称真实口型同步。
 - 任一镜头的语音、字幕、口型、人物一致性、环境一致性、转场或渲染失败可定位、可恢复、可只重做失败阶段，不破坏其他合格素材。
 - 作品版本、镜头、生成任务/步骤、角色/场景参考、原视频、口型版、音频、对齐、SRT/ASS、质检、时间线和 Render 可双向追溯。
 - 每个 ComfyUI 音频任务严格执行 queue 空闲 → `/free` → 单任务 → history/download → `/free`；401/403 显示“服务认证失败”。
-- 逐句试听/口型、逐镜头首中末帧、人物/环境连续性、逐转场播放、ffprobe 和完整解码全部通过。
+- 逐句试听/口型、逐镜头首中末帧、人物/环境连续性、逐转场播放、响度/True Peak/采样率/声道、ffprobe 和完整解码全部通过。
 - Backend、Web、Playwright、Docker、迁移、FFmpeg/ffprobe 和至少一次真实六镜头验收均有新鲜证据。
 - 仓库 README、运维文档、验收文档、GitHub 分支和 Obsidian 项目总览同步。
 

@@ -77,8 +77,8 @@ npm install
 npx playwright test
 ```
 
-部署与 Secret 注入见 [docs/deployment.md](docs/deployment.md)，日常排障与恢复见 [docs/operations.md](docs/operations.md)，首个切片验收记录见 [docs/acceptance/first-generation-slice.md](docs/acceptance/first-generation-slice.md)。
+部署与 Secret 注入见 [docs/deployment.md](docs/deployment.md)，日常排障与恢复见 [docs/operations.md](docs/operations.md)，首个切片验收记录见 [docs/acceptance/first-generation-slice.md](docs/acceptance/first-generation-slice.md)，CASE-0001 长文本成片参考边界见 [docs/acceptance/case-0001-long-form.md](docs/acceptance/case-0001-long-form.md)。
 
-后续阶段将按已确认计划接续实现短故事的 Qwen3-TTS 配音、词级对齐、字幕、口型同步、人物/环境连续性质检、音乐音效、可配置转场与成片，并复用同一模型完成小说/长文本拆解为分集、场景、镜头及批量可剪辑素材。
+后续阶段将按已确认计划接续实现短故事的 Qwen3-TTS 配音、词级对齐、字幕、口型同步、人物/环境连续性质检、音乐音效、可配置转场与成片，并复用同一模型完成小说/长文本拆解。Web 和任务模型将严格区分“关键图运动成片”与“完整生成式视频”；真实口型验收是独立能力，未通过 InfiniteTalk 12GB 实测前不得标记为可用。
 
 远程 Access 配置已通过宿主机和 API 容器双路径验证：Ollama、ComfyUI 均曾返回 200，模型清单和 CUDA 设备可读取。首次真实图片任务已取得并持久化 ComfyUI `prompt_id`，但等待期间 Tunnel 再次转为 Cloudflare `1033`（HTTP 530）；平台保留同一远程任务并进入可恢复追踪，不会盲目重复提交。图片产物、视频产物和网页播放仍需在 Tunnel 稳定后完成最终验收。

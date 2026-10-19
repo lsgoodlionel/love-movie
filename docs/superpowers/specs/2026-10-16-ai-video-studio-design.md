@@ -1,7 +1,7 @@
 # 爱视频（AI Video Studio）产品与系统设计
 
 - 日期：2026-10-16
-- 状态：已确认，并合并 2026-10-16 远程生产链交接及 2026-10-19 音频/连续性生产约束
+- 状态：已确认，并合并 2026-10-16 远程生产链交接、2026-10-19 音频/连续性约束及 CASE-0001 长文本成片证据
 - 最终本地仓库：`/Users/lionel/Develop/love-movie`
 - 隔离开发检出：`/Users/lionel/Documents/New project/love-movie-work`
 - 首要交付：在 Web 页面输入文字，真实生成、预览并管理图片和视频
@@ -155,6 +155,10 @@ Ollama 入口的内部 Host rewrite 已由 Tunnel 配置处理，网站继续使
 
 每个任务继续拆为可恢复步骤。步骤记录开始和结束时间、尝试次数、远端任务 ID、输入版本、输出素材及脱敏错误。GenerationTask 必须持久化 `prompt_id`、能力类型、脱敏参数摘要、提交/完成时间和失败原因；输出文件继续作为 Asset 保存并建立父子素材关系。Cloudflare Access 401/403 的业务文案固定为“服务认证失败”。
 
+GenerationStep 还必须保存版本化恢复点与 `qa_status`，用于从已完成的关键图、语音、字幕、镜头运动、混音或渲染阶段继续执行。恢复点只保存对象存储引用、输入摘要、模型/工作流/策略版本和远端任务标识，不保存 Secret 或任意远端路径。
+
+长文本生产至少使用以下可恢复步骤名：`source_preprocessed`、`production_design_locked`、`keyframes_generated`、`narration_generated`、`alignment_completed`、`timeline_built`、`subtitles_built`、`audio_mixed`、`render_packaged`、`qa_completed`。每一步的 `qa_status` 使用 `pending|passed|failed|not_applicable|passed_with_limitations`，页面和恢复逻辑必须使用同一枚举。
+
 ## 7. 图片生成数据流
 
 1. API 校验用户权限、提示词长度、尺寸、批量数和配额。
@@ -179,6 +183,8 @@ Ollama 入口的内部 Host rewrite 已由 Tunnel 配置处理，网站继续使
 
 图生视频输入文件名必须由后端生成，并包含租户、项目、镜头和随机后缀；禁止跨租户可碰撞名称，也不得依赖 `overwrite=true`。当前已验证单镜头参数为 512×512、81 帧、16 FPS、20 steps，约 5.06 秒；这些值由版本化模板策略管理，普通用户不能突破服务器硬上限。生产只保留必要的 MP4 输出，轻量预览由媒体 Worker 异步制作，避免 ComfyUI 同步 WebP 节点增加 GPU 后处理开销。
 
+作品、镜头和 Render 必须显式记录 `media_generation_mode`：`generated_keyframe_motion` 表示生成关键图后通过推拉、平移、裁切等时间线运动形成镜头；`full_generated_video` 表示由视频生成模型直接产生连续帧。关键图运动成片不得在 API、Web 文案或验收中冒充完整生成式视频。每个关键图运动镜头保存 `source_image_id`，并与 `shot_id`、`subtitle_cue_id`、Character/Scene Bible 版本、恢复点和 QA 状态关联。
+
 ## 9. 短故事与长篇生产
 
 内容层级固定为：
@@ -202,6 +208,8 @@ Ollama 输出结构化剧本，包括角色、场景、镜头、旁白、对白�
 每条对白和派生结果必须可追溯到 `dialogue_id`、`speaker_id`、`shot_id`、`audio_asset_id`、`subtitle_cue_id`、句级 `start_ms/end_ms`、词级时间戳、对齐模型版本和 `lip_sync_status`。字幕文本必须与实际发音逐字核对；可以为自然语速调整断句，但不能漏字、跨镜头提前或滞后。字幕起止与对应语音的目标误差不超过 120ms。
 
 正脸或明显侧脸的说话人物必须执行口型同步；非说话人物保持闭口或自然微表情。多人镜头在提交口型任务前必须锁定 speaker。明显音节/嘴型错位、说话人错误或静音时持续张嘴均判失败，只重做该镜头的口型层，不重做已通过音频或全片。
+
+`lip_sync_verified` 是独立验收标志，默认 `false`。只有官方 InfiniteTalk 模型栈在 RTX 3060 12GB 上完成真实稳定性和音画同步验收后，使用该栈并通过逐镜头检查的资产才可设为 `true`。使用旁白配合反应、越肩、文件、手部和细节镜头规避可见嘴部的作品可以完成叙事验收，但必须记录 `lip_sync_status=not_required_by_shot_design`、保持 `lip_sync_verified=false`，不得宣称完成真实口型同步。
 
 ### 9.3 Character Bible 与人物一致性
 
@@ -241,6 +249,7 @@ Scene Bible 保存场景 ID、时间、光向、主色温、家具/道具位置�
 - 文件摘要、格式、尺寸、时长和存储位置
 - 角色/场景参考资产版本、实际 seed、模型、LoRA/IP-Adapter/FaceID 参数和质检分数
 - 对齐结果、词级时间戳、SRT/ASS、原视频、口型修订版以及最终输出之间的素材血缘
+- `media_generation_mode`、`source_image_id`、shot/cue 映射、恢复点和逐阶段 QA 状态
 
 简化时间线支持镜头排序、入点/出点裁切、转场、音量、字幕调整、素材替换和重新合成。每个转场保存 `transition_type`、`duration_ms`、前后镜头句柄区间和音频衔接参数；按镜头内容选择动作匹配、视线匹配、构图匹配、J/L cut、短交叉淡化或硬切，不得机械使用同一转场。动作连续场景优先硬切或匹配切，默认转场保持短促以避免拖影。
 
@@ -279,7 +288,7 @@ Worker 重启后读取数据库步骤状态，并查询 ComfyUI history 或队�
 
 ### 13.1 单元测试
 
-覆盖权限、参数硬限制、幂等键、任务状态机、工作流参数注入、素材来源、参数快照、词级时间戳、字幕 120ms 误差、speaker 锁定、口型状态、人物/场景阈值和敏感字段过滤。
+覆盖权限、参数硬限制、幂等键、任务状态机、工作流参数注入、素材来源、参数快照、词级时间戳、字幕 120ms 误差、speaker 锁定、口型状态、`lip_sync_verified` 默认 false、两类 `media_generation_mode`、恢复点、人物/场景阈值和敏感字段过滤。
 
 ### 13.2 集成测试
 
@@ -293,9 +302,17 @@ Worker 重启后读取数据库步骤状态，并查询 ComfyUI history 或队�
 
 ### 13.4 端到端测试
 
-通过浏览器完成登录、输入文字、生成、刷新恢复进度、在线预览、下载、历史查询和权限隔离，并逐镜头查看语音、字幕、口型、人物一致性、环境一致性、转场和人工复核状态，验证只重做失败阶段。
+通过浏览器完成登录、输入文字、生成、刷新恢复进度、在线预览、下载、历史查询和权限隔离，并逐镜头查看生成方式、来源关键图、语音、字幕、口型、人物一致性、环境一致性、转场和人工复核状态，验证只重做失败阶段。界面必须把“关键图运动成片”“完整生成式视频”和“真实口型已验证/未验证”分别显示。
 
 远程 GPU 测试区分日常最小参数冒烟与阶段正式验收。每个阶段只进行必要的完整真实生成，避免无意义消耗 GPU。测试输出和日志不得包含 Secret 或完整请求头。
+
+### 13.5 CASE-0001 长文本成片参考基线
+
+2026-10-19 的 CASE-0001 二次验证证明“长文压缩 → 24 段隔离 Qwen3-TTS 旁白 → 24 条字幕 → 15 张有效 Wan 2.2 关键图中选择 13 张 → 24 个关键图运动镜头 → ACE-Step 配乐 + Stable Audio 环境音 → 混音 → 成片”可形成 245.440 秒的 H.264 1280×720、16fps、AAC 48kHz 双声道文件。全片解码通过，综合响度 -15.9 LUFS，True Peak -1.5 dBFS；人工抽检 5、48、94、140、188、238 秒未观察到黑帧、字幕截断或明显画面破损。
+
+该案例状态为 `passed_with_documented_limitations`：它验证的是 `generated_keyframe_motion`，不是 24 段 `full_generated_video`；真实口型未执行，`lip_sync_verified=false`。对白使用旁白配合反应、侧面、越肩、文件、手部和细节镜头规避可见错误口型。只有官方 InfiniteTalk 完整模型栈在 12GB GPU 上通过真实验收后，才能改变这一口型能力边界。
+
+CASE-0001 还固定以下恢复与安全规则：已完成关键图不得在恢复后重复生成；Z-Image INT8 的 `int8_tensorwise` 已知不兼容流程不得自动回退；LoRA 模型补丁缓存异常只允许限定 PID 重启 Windows 原生 ComfyUI，重启后必须重新确认 `os=win32`、队列为空和模型清单，不得误切回 WSL 8188。合成案例必须展示虚构声明，不能包装成真实机构事实。
 
 ## 14. 可观测性与管理
 
